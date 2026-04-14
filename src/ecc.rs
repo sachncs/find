@@ -45,6 +45,11 @@ use tracing::instrument;
 pub fn parse_pubkey(hex_str: &str) -> Result<ProjectivePoint> {
     // Hex decoding using the 'hex' crate; failure maps to FindError::HexError.
     let bytes = hex::decode(hex_str).map_err(FindError::from)?;
+    if bytes.is_empty() {
+        return Err(FindError::InvalidPublicKey(
+            "Empty hex string provided".to_string(),
+        ));
+    }
 
     // PublicKey::from_sec1_bytes enforces full SEC1 compliance and curve checks.
     let pubkey = PublicKey::from_sec1_bytes(&bytes)
@@ -73,11 +78,16 @@ pub fn generator() -> ProjectivePoint {
 /// All resulting scalars are valid elements of the scalar field $\mathbb{F}_n$.
 pub fn hex_to_scalar(hex_str: &str) -> Result<Scalar> {
     let bytes = hex::decode(hex_str).map_err(FindError::from)?;
+    if bytes.is_empty() {
+        return Err(FindError::EccError("Empty hex string input".to_string()));
+    }
     let mut fixed_bytes = [0u8; 32];
 
     // Optimization: avoid extra allocation by slicing directly into fixed_bytes.
+    // bounds check is redundant since len <= bytes.len() by definition.
     let len = bytes.len().min(32);
-    fixed_bytes[32 - len..].copy_from_slice(&bytes[..len]);
+    let src = &bytes[..len];
+    fixed_bytes[32 - src.len()..].copy_from_slice(src);
 
     // from_repr performs the range check against curve order n.
     Option::from(Scalar::from_repr(fixed_bytes.into()))
@@ -110,16 +120,20 @@ pub fn subtract(p: &ProjectivePoint, q: &ProjectivePoint) -> ProjectivePoint {
 /// This is the most computationally expensive part of the coordinate extraction.
 ///
 /// ### Invariants
-/// Assumes the point is not the identity point (Point at Infinity), as the
-/// affine X-coordinate is undefined for infinity.
+/// Handles the identity point (Point at Infinity) gracefully by returning a
+/// zero-filled X-coordinate. Callers should guard against identity inputs if
+/// they require different behavior.
 pub fn to_hex_x(p: &ProjectivePoint) -> String {
     let affine = p.to_affine(); // Normalization (Inversion)
     let encoded = affine.to_encoded_point(false);
 
-    // We use as_ref() to avoid copying the coordinate buffer during hex encoding.
-    let x = encoded
-        .x()
-        .expect("Unexpected Identity point in coordinate extraction");
+    // Identity point (O) has no affine X-coordinate; return canonical zero representation.
+    let x = match encoded.x() {
+        Some(x) => x,
+        None => {
+            return "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+        }
+    };
     hex::encode(x)
 }
 
@@ -142,8 +156,6 @@ mod tests {
         let s = hex_to_scalar(hex).unwrap();
         assert_eq!(s, Scalar::from(1u64));
     }
-
-    /// --- RIGOROUS ALGEBRAIC VERIFICATION SUITE ---
 
     /// Verifies the identity P - Q == P + (-Q).
     #[test]
@@ -190,6 +202,31 @@ mod tests {
         let right = -subtract(&q, &p);
 
         assert_eq!(left, right, "P - Q must equal -(Q - P)");
+    }
+
+    /// Verifies that empty string is rejected by parse_pubkey.
+    #[test]
+    fn test_parse_pubkey_empty_string() {
+        let res = parse_pubkey("");
+        assert!(res.is_err(), "Empty hex string must be rejected");
+    }
+
+    /// Verifies that empty string is rejected by hex_to_scalar.
+    #[test]
+    fn test_hex_to_scalar_empty_string() {
+        let res = hex_to_scalar("");
+        assert!(res.is_err(), "Empty hex string must be rejected");
+    }
+
+    /// Verifies that to_hex_x handles the identity point gracefully.
+    #[test]
+    fn test_to_hex_x_identity_point() {
+        let identity = ProjectivePoint::IDENTITY;
+        let x = to_hex_x(&identity);
+        assert_eq!(
+            x, "0000000000000000000000000000000000000000000000000000000000000000",
+            "Identity point X-coordinate must be canonical zero string"
+        );
     }
 
     /// Property-based verification for ECC subtraction invariants.

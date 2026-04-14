@@ -49,6 +49,11 @@ pub enum FindError {
     /// Failure to serialize search states or variants to JSON.
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
+
+    /// Cache file integrity check failed (e.g., size not a multiple of 32 bytes,
+    /// or truncated file detected during read).
+    #[error("Cache file corrupted: {0}")]
+    CacheCorrupted(String),
 }
 
 /// Convenience alias for operations using the unified `FindError` model.

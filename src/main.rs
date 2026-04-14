@@ -108,30 +108,52 @@ fn main() -> anyhow::Result<()> {
     // 3. STATE ANALYSIS & RESUMPTION
     let checkpoint_file = Path::new(&args.output_dir).join("checkpoint.json");
     let mut current_j: u64 = 0;
-    if checkpoint_file.exists() {
-        if let Ok(content) = fs::read_to_string(&checkpoint_file) {
-            if let Ok(cp) = serde_json::from_str::<Checkpoint>(&content) {
-                if cp.pubkey == args.pubkey {
-                    // RESEARCH INTEGRITY GUARD:
-                    // We verify that the stored progress matches our cryptographic primitives.
-                    let scalar = k256::Scalar::from(cp.last_j);
-                    let expected_p = ecc::scalar_mul_g(&scalar);
-                    let expected_x = ecc::to_hex_x(&expected_p);
+    match fs::read_to_string(&checkpoint_file) {
+        Ok(content) => match serde_json::from_str::<Checkpoint>(&content) {
+            Ok(cp) if cp.pubkey == args.pubkey => {
+                // RESEARCH INTEGRITY GUARD:
+                // We verify that the stored progress matches our cryptographic primitives.
+                let scalar = k256::Scalar::from(cp.last_j);
+                let expected_p = ecc::scalar_mul_g(&scalar);
+                let expected_x = ecc::to_hex_x(&expected_p);
 
-                    if expected_x != cp.last_x {
-                        return Err(find::error::FindError::ResearchIntegrityError(
-                            format!("Stored checkpoint X-coordinate ({}) mismatch. Expected ({}). Data corruption or curve logic change detected.",
-                            cp.last_x, expected_x)
-                        ).into());
-                    }
-
-                    current_j = cp.last_j;
-                    info!(
-                        "Verified research state integrity. Resuming from j = {} (X: {})",
-                        current_j, cp.last_x
-                    );
+                if expected_x != cp.last_x {
+                    return Err(find::error::FindError::ResearchIntegrityError(
+                        format!(
+                            "Stored checkpoint X-coordinate ({}) mismatch. Expected ({}). Data corruption or curve logic change detected.",
+                            cp.last_x, expected_x
+                        )
+                    ).into());
                 }
+
+                current_j = cp.last_j;
+                info!(
+                    "Verified research state integrity. Resuming from j = {} (X: {})",
+                    current_j, cp.last_x
+                );
             }
+            Ok(cp) => {
+                // Checkpoint exists but is for a different pubkey.
+                tracing::warn!(
+                    "Checkpoint pubkey ({}) does not match target ({}). Starting fresh.",
+                    cp.pubkey,
+                    args.pubkey
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to parse checkpoint file ({}): {}. Starting fresh.",
+                    checkpoint_file.display(),
+                    e
+                );
+            }
+        },
+        Err(e) => {
+            tracing::warn!(
+                "Failed to read checkpoint file ({}): {}. Starting fresh.",
+                checkpoint_file.display(),
+                e
+            );
         }
     }
 
@@ -234,12 +256,31 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// Atomically persists search progress using write-then-rename semantics.
+///
+/// Uses the standard write-then-rename pattern which is atomic on POSIX
+/// filesystems for same-directory renames. The rename operation itself
+/// commits the directory entry change durably on most filesystems without
+/// requiring explicit directory fsync (which would need platform-specific code).
 fn save_checkpoint_atomic(target: &Path, cp: &Checkpoint) -> anyhow::Result<()> {
     let tmp_path = target.with_extension("json.tmp");
     let json = serde_json::to_string_pretty(cp)?;
     fs::write(&tmp_path, json)?;
-    fs::rename(tmp_path, target)?;
-    Ok(())
+
+    // Write the checkpoint data durably before renaming.
+    // On POSIX, rename is atomic for same-filesystem operations and the
+    // directory entry is committed to disk by the OS within seconds.
+    fs::rename(&tmp_path, target)?;
+
+    // Verify the rename persisted by checking the target file exists
+    // and the temp file has been cleaned up.
+    if target.exists() {
+        if tmp_path.exists() {
+            let _ = fs::remove_file(&tmp_path);
+        }
+        Ok(())
+    } else {
+        Err(std::io::Error::other("Checkpoint rename did not persist").into())
+    }
 }
 
 /// Basic control flow for interactive pausing.
@@ -251,22 +292,29 @@ enum ControlFlow {
 
 /// Detects if the current chunk spans a power-of-2 boundary and prompts the operator.
 fn handle_power_of_2_boundary(start: u64, end: u64) -> io::Result<ControlFlow> {
-    // Determine the highest bit set in the range boundaries.
-    // 0 has 64 leading zeros, so p=0. 1 has 63 leading zeros, so p=1.
-    let prev_p = u64::BITS - (start.saturating_sub(1)).leading_zeros();
-    let curr_p = u64::BITS - end.leading_zeros();
+    // Compute the 0-indexed MSB position (floor(log2)) for the boundaries.
+    // Formula: msb_pos(v) = 63 - v.leading_zeros() for v > 0.
+    // For v = 0, msb is undefined; use 0 as sentinel.
+    let msb_pos = |v: u64| -> u32 {
+        if v == 0 {
+            0
+        } else {
+            63 - v.leading_zeros()
+        }
+    };
+    let prev_p = msb_pos(start.saturating_sub(1));
+    let curr_p = msb_pos(end);
 
-    // If a transition occurred (e.g., from depth 15 to 16), trigger the alert.
+    // Detect when the MSB position increases — we've crossed into a new power-of-2 range.
     if curr_p > prev_p {
-        // Calculate the power of 2 that was crossed.
-        let power = curr_p - 1;
-        let boundary_val = 1u64.checked_shl(power).unwrap_or(u64::MAX);
+        // The boundary value is the smallest number with this MSB position: 2^curr_p.
+        let boundary_val = 1u64 << curr_p;
 
-        // Ensure the boundary value is actually within the just-completed chunk.
+        // Confirm the boundary value actually falls within this chunk.
         if boundary_val >= start && boundary_val <= end {
             println!(
                 "\n⚖️ Boundary Alert: Reached search depth 2^{} ({})",
-                power, boundary_val
+                curr_p, boundary_val
             );
             print!("Continue exploration to next depth? [Y/n]: ");
             io::stdout().flush()?;

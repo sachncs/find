@@ -37,7 +37,7 @@ fn bench_batch_normalization(c: &mut Criterion) {
 
     // Setup: Generate a representative batch of 32 points.
     let scalars: Vec<Scalar> = (1..33).map(|i| Scalar::from(i as u64)).collect();
-    let points: Vec<k256::ProjectivePoint> = scalars.iter().map(|s| ecc::scalar_mul_g(s)).collect();
+    let points: Vec<k256::ProjectivePoint> = scalars.iter().map(ecc::scalar_mul_g).collect();
 
     // v1.x baseline: Sequential coordinate conversion.
     group.bench_function("single_normalization", |b| {
@@ -52,10 +52,8 @@ fn bench_batch_normalization(c: &mut Criterion) {
     group.bench_function("batch_normalization_32", |b| {
         let mut affines = vec![k256::AffinePoint::IDENTITY; points.len()];
         b.iter(|| {
-            black_box(k256::ProjectivePoint::batch_normalize(
-                &points,
-                &mut affines,
-            ));
+            k256::ProjectivePoint::batch_normalize(&points, &mut affines);
+            black_box(());
         })
     });
     group.finish();

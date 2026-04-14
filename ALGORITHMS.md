@@ -1,67 +1,121 @@
-# Algorithmic Reference: High-Performance search
+# Algorithmic Reference
 
 This document provides a formal mathematical and algorithmic breakdown of the discovery logic used in the `find` tool.
 
-## 🔬 Core Algorithm: Multi-Variant Range-Splitting
+## Problem Statement
 
-The problem is defined as finding a scalar $d \in [1, n-1]$ given an elliptic curve point $P = d \cdot G$ on the secp256k1 curve.
+Given an elliptic curve point `P = d·G` on secp256k1, find the scalar `d ∈ [1, n-1]`. The naive approach is a linear search over all possible scalars, which is infeasible at scale.
 
-The tool implements a **parallel range-splitting engine** that explores multiple candidates simultaneously by shifting the target point $P$ into several different regions of the cyclic group $\mathbb{G}$.
+## Core Algorithm: Multi-Variant Range-Splitting
 
-### 1. Shift Variants ($V$)
+The system exploits the symmetry of X-coordinates on secp256k1 to split the search space into 512 disjoint regions, each explored in parallel.
 
-The engine generates 512 variants $P_V$ such that:
-$$P_V = P - (V \cdot G)$$
+### Shift Variants
 
-Where $V$ belongs to a set of pre-calculated anchors:
--   **Binary Anchors:** $V \in \{2^0, 2^1, \dots, 2^{255}\}$
--   **Cumulative Anchors:** $V \in \{\sum_{i=0}^k 2^i \mid k \in [0, 255]\}$
+For each variant anchor `V`, compute a shifted target point:
 
-By shifting the target, the system essentially searches for a "small" scalar $j$ such that the X-coordinate of $j \cdot G$ matches any of the shifted points $P_V$.
+```
+P_V = P - (V · G)
+```
 
-### 2. The Matching Invariant
+The 512 variants use two anchor families:
 
-The search loop iterates through $j \in [1, R]$ and checks for the equality of X-coordinates:
-$$x(j \cdot G) = x(P_V)$$
+**Binary anchors** — `V = 2^i` for `i ∈ [0, 255]`
+**Cumulative anchors** — `V = Σ(2^0 .. 2^i)` for `i ∈ [0, 255]`
 
-Due to the symmetry of X-coordinates on the curve ($x(P) = x(-P)$), a match implies:
-1.  **Direct Match:** $j \cdot G = P - V \cdot G \implies P = (V + j) \cdot G$
-2.  **Symmetric Match:** $j \cdot G = -(P - V \cdot G) \implies P = (V - j) \cdot G$
+These cover both bit-aligned ranges and their cumulative counterparts, ensuring comprehensive curve coverage.
 
-Therefore, each match yields two candidate private keys:
--   $d \equiv V + j \pmod n$
--   $d \equiv V - j \pmod n$
+### Matching Invariant
 
-### 3. Batch Normalization (Simultaneous Inversion)
+For each scalar `j` in the sweep range, the system checks:
 
-To maximize throughput, the engine processes scalars in batches of $N=32$. Coordinate extraction requires converting a projective point $(X:Y:Z)$ to affine $(X/Z, Y/Z)$, which involves a modular inversion of $Z$.
+```
+x(j · G) = x(P_V)
+```
 
-Instead of $N$ independent inversions, we use **Montgomery's Simultaneous Inversion**:
-1.  Compute prefix products of $Z_i$.
-2.  Perform a **single** inversion of the total product.
-3.  Derive individual inverses $1/Z_i$ using the prefix products and the total inverse.
+When equality holds, due to point symmetry on secp256k1 (`x(P) = x(-P)`), the discrete logarithm must satisfy one of:
 
-This reduces the complexity from $N$ inversions to **1 inversion** and $3(N-1)$ multiplications, yielding a 15-20x speedup in the normalization phase.
+```
+d = V + j  (mod n)   [positive parity]
+d = V - j  (mod n)   [negative parity]
+```
 
-### 4. Complexity Analysis
+Both candidates are produced for each match. The system does not know which parity is correct; both must be validated externally against the target public key.
 
-| Operation | Complexity | Implementation Detail |
-| :--- | :--- | :--- |
-| **Variant Generation** | $O(V_{count})$ | Performed once per pubkey. Uses Projective subtract. |
-| **Lookup (Index)** | $O(1)$ | BTreeMap key lookup for 32-byte X-coordinates. |
-| **Sweep (CPU)** | $O(R)$ | Linear sweep over $j$. Multiplied by throughput of $d \cdot G$. |
-| **Sweep (I/O)** | $O(R)$ | Sequential read-scan of binary cache. Extremely fast on NVMe. |
+### Mathematical Derivation
 
-## Scalar Arithmetic Invariants
+Given `P = d·G` and a match at variant `V` with scalar `j`:
 
-All scalar calculations are performed modulo $n$, where:
-$n = \text{0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141}$
+```
+x(j·G) = x(P - V·G)
+       = x(P - V·G)          (by symmetry: x(-Q) = x(Q))
+```
 
-The engine handles underflows in the negative parity case ($V - j$) by adding $n$ to the result before the final modulo operation, ensuring all candidates are valid private keys in $\mathbb{F}_n$.
+Case 1 — direct match: `j·G = P - V·G`
+```
+→ P = (V + j)·G
+→ d ≡ V + j (mod n)
+```
 
-## Parallelization Strategy
+Case 2 — symmetric match: `j·G = -(P - V·G)`
+```
+→ P = (V - j)·G
+→ d ≡ V - j (mod n)
+```
 
-The tool utilizes **Work-Stealing Task Parallelism** via the `rayon` crate.
-1.  The trillion-range segment is split into chunks sized for the CPU's L2/L3 cache hierarchies.
-2.  Each thread independently calculates scalar multiples and probes the `VariantIndex`.
-3.  The first thread to find a match triggers an early exit $(\text{find\_map\_any})$.
+The negative case requires a modular underflow guard: if `V < j`, compute `(n + V - j) mod n`.
+
+## Batch Normalization
+
+Coordinate extraction from projective to affine form requires a modular inversion of `Z`. Naive sequential normalization performs `N` inversions for `N` points.
+
+The k256 crate provides `ProjectivePoint::batch_normalize`, which applies Montgomery's simultaneous inversion trick. For a batch of `N` points:
+
+1. Compute prefix products `c_i = Π(Z_j)` for `j ≤ i`
+2. Invert `c_{N-1}` with a single modular exponentiation `c_{N-1}^{n-2} mod n`
+3. Back-substitute to obtain each `1/Z_i` from the prefix products
+
+Complexity shifts from `N` inversions to `1` inversion + `O(N)` multiplications. For `N=32`, this yields approximately 630x speedup in the normalization phase on secp256k1.
+
+## Complexity Analysis
+
+| Operation | Complexity | Notes |
+|---|---|---|
+| Variant generation | `O(512)` | One-time per target pubkey; projective subtraction + to_affine |
+| Index lookup | `O(log 512) = O(1)` | Binary search on flat sorted array of 512 entries |
+| Sweep (CPU) | `O(R)` | Linear over range `R`; bounded by scalar multiplication throughput |
+| Sweep (I/O) | `O(R)` | Sequential binary read; NVMe throughput ~GB/s |
+
+The index is not a hash table — it is a flat `Vec<([u8; 32], usize)>` sorted by X-coordinate. This provides superior cache locality compared to a hash table for the fixed 512-entry variant set.
+
+## Scalar Arithmetic
+
+All arithmetic on candidate scalars is performed modulo the secp256k1 curve order:
+
+```
+n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+```
+
+The negative candidate `V - j` is computed as `(n + V - j) mod n` to handle the case `V < j` without producing a negative intermediate value.
+
+## Parallelism
+
+The system uses `rayon`'s `into_par_iter().find_map_any()` for work-stealing parallelism:
+
+- Range `[start, end]` is divided into batches of 32 scalars
+- Each worker processes one batch: scalar multiplication → batch normalization → binary search
+- `find_map_any` provides early-exit on first match — the first thread to find a hit terminates the entire search
+- The `VariantIndex` reference is shared immutably across all workers (no locks required; the index is read-only after construction)
+
+The global `PROGRESS` atomic counter accumulates across batch boundaries, allowing progress reporting across multiple cache chunks.
+
+## Precomputation and Binary Caching
+
+The optional precomputation phase (`precompute_chunk`) writes X-coordinates to a binary file for reuse across multiple target public keys:
+
+- Format: 32 bytes per X-coordinate, sequential, little-endian representation
+- File size: `32 * (end - start + 1)` bytes
+- Workers write non-overlapping regions via `pwrite_at` (atomic on POSIX)
+- On cache hit, `perform_cached_sweep` reads the binary file sequentially, bypassing ECC arithmetic entirely
+
+The cache file is validated on open: if the file size is not a multiple of 32 bytes, a `CacheCorrupted` error is returned rather than silently producing wrong results.

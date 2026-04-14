@@ -91,7 +91,7 @@ fn test_rigorous_recovery_1234567890() {
 
 /// Pads a hex string to even length for `hex::decode` compatibility.
 fn pad_hex(h: &str) -> String {
-    if h.len() % 2 != 0 {
+    if !h.len().is_multiple_of(2) {
         format!("0{}", h)
     } else {
         h.to_string()
