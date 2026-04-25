@@ -5,11 +5,14 @@ use k256::Scalar;
 use num_bigint::BigUint;
 use proptest::prelude::*;
 
-/// Mathematical constant: secp256k1 Curve Order n.
+/// Mathematical constant: secp256k1 curve order \(n\) in hex.
 const CURVE_ORDER_HEX: &str = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141";
 
-// --- MANDATORY RANDOMIZED TEST (6-8 DIGITS) ---
-
+/// Verifies recovery for a randomized 6–8 digit scalar.
+///
+/// A deterministic RNG seeds the test so that it is reproducible. The target
+/// scalar is constructed as \(d = V + j \pmod n\) with \(V = 2^{64}\), and the
+/// sweep is narrowed to the exact value of \(j\).
 #[test]
 fn test_mandatory_random_6_to_8_digits() {
     use rand::{Rng, SeedableRng};
@@ -18,7 +21,6 @@ fn test_mandatory_random_6_to_8_digits() {
     let mut rng = ChaCha8Rng::seed_from_u64(42);
     let j: u64 = rng.gen_range(100_000..=99_999_999);
 
-    // Set d = V + j where V = 2^64
     let v_scalar = BigUint::from(1u64) << 64;
     let n = BigUint::parse_bytes(CURVE_ORDER_HEX.as_bytes(), 16).unwrap();
     let d_biguint: BigUint = (&v_scalar + BigUint::from(j)) % &n;
@@ -34,47 +36,51 @@ fn test_mandatory_random_6_to_8_digits() {
 
     let m = result.unwrap();
     let expected_d_hex = d_biguint.to_str_radix(16);
-    // Ensure both match (case insensitive if needed, but rad(16) is lower)
     assert!(m
         .candidates
         .iter()
         .any(|c| c.to_lowercase() == expected_d_hex.to_lowercase()));
 }
 
-// --- BOUNDARY & EDGE CASES ---
-
+/// Verifies recovery at the minimum 6-digit boundary.
 #[test]
 fn test_boundary_min_6_digits() {
     run_controlled_test(100_000, 10, "Minimum 6-digit boundary");
 }
 
+/// Verifies recovery at the maximum 8-digit boundary.
 #[test]
 fn test_boundary_max_8_digits() {
     run_controlled_test(99_999_999, 20, "Maximum 8-digit boundary");
 }
 
+/// Verifies recovery for a scalar with repeated digits.
 #[test]
 fn test_edge_repeated_digits() {
     run_controlled_test(111_111, 30, "Repeated digits");
 }
 
+/// Verifies recovery for a scalar with an alternating pattern.
 #[test]
 fn test_edge_alternating_pattern() {
     run_controlled_test(121_212, 40, "Alternating pattern");
 }
 
+/// Verifies recovery for a palindromic scalar.
 #[test]
 fn test_edge_palindromic() {
     run_controlled_test(123_321, 50, "Palindromic scalar");
 }
 
+/// Verifies recovery for a single-digit scalar.
 #[test]
 fn test_edge_single_digit() {
     run_controlled_test(1, 1, "Single digit j");
 }
 
-// --- PROPERTY-BASED TESTING ---
-
+// Property: the sweep finds any scalar in the range `1..100_000`.
+// For each random j a target point is built from d = V + j (mod n)
+// with V = 2^10, and the exact sweep [j, j] is executed.
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(20))]
     #[test]
@@ -96,8 +102,7 @@ proptest! {
     }
 }
 
-// --- FAILURE & INTEGRATION ---
-
+/// Verifies that a malformed public key string is rejected.
 #[test]
 fn test_failure_malformed_hex() {
     let malformed = "not_hex_at_all";
@@ -105,6 +110,8 @@ fn test_failure_malformed_hex() {
     assert!(res.is_err());
 }
 
+/// Verifies deterministic output: running the same sweep twice yields the
+/// same match.
 #[test]
 fn test_idempotency_deterministic_output() {
     let j = 555_555u64;
@@ -130,8 +137,8 @@ fn test_idempotency_deterministic_output() {
         .any(|c| c.to_lowercase() == expected_hex.to_lowercase()));
 }
 
-// --- HELPER ---
-
+/// Helper: builds a target point from \(d = (2^{\text{power}} + j) \pmod n\),
+/// creates an index, and asserts that the exact sweep `[j, j]` succeeds.
 fn run_controlled_test(j: u64, v_power: u32, label: &str) {
     let v_val = BigUint::from(1u64) << v_power;
     let n = BigUint::parse_bytes(CURVE_ORDER_HEX.as_bytes(), 16).unwrap();
@@ -146,6 +153,7 @@ fn run_controlled_test(j: u64, v_power: u32, label: &str) {
     assert!(result.is_some(), "Failed boundary/edge test: {}", label);
 }
 
+/// Converts a [`BigUint`] to a [`Scalar`], reducing modulo the curve order.
 fn biguint_to_scalar(big: &BigUint) -> Scalar {
     let bytes = big.to_bytes_be();
     let mut fixed_bytes = [0u8; 32];

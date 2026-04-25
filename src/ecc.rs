@@ -4,24 +4,11 @@
 
 //! High-performance secp256k1 elliptic curve primitives and abstractions.
 //!
-//! # 🔬 Principal Design
-//! This module provides a mission-critical abstraction layer over the `k256`
-//! crate, enforcing zero-copy data flow and strict SEC1 compliance. It is
-//! optimized for search contexts where coordinate conversion is the primary
-//! computational bottleneck.
+//! This module wraps the [`k256`] crate with a thin, search-oriented API.
+//! All operations enforce SEC1 compliance and strict scalar range validation.
 //!
-//! ## 📐 Mathematical Context
-//! The secp256k1 curve satisfies $y^2 = x^3 + 7 \pmod p$.
-//! Points are typically handled in **Projective Coordinates** $(X:Y:Z)$ to
-//! avoid expensive modular inversions during addition and subtraction. This
-//! tool utilizes projective arithmetic for anchor generation ($O(1)$) and
-//! only transitions to **Affine Coordinates** $(x, y)$ for final X-coordinate
-//! matching.
-//!
-//! ## 🛡 Compliance
-//! - **SEC1 v2.0:** Implements full SEC1-compliant public key parsing.
-//! - **Field Arithmetic:** Enforces strict range validation for scalars
-//!   against the curve order $n$.
+//! Points are handled in projective coordinates during arithmetic and only
+//! normalized to affine when an X-coordinate must be extracted.
 
 use crate::error::{FindError, Result};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
@@ -31,19 +18,28 @@ use tracing::instrument;
 
 /// Parses a public key from its SEC1 hexadecimal representation.
 ///
-/// ### Internal Flow
-/// 1.  **Hex Decoding:** Converts string-input to byte-slice.
-/// 2.  **Point Validation:** Verifies the first byte (prefix) and that the
-///     resulting coordinates lie on the curve $y^2 = x^3 + 7$.
-/// 3.  **Coordinate Type:** Transitions the resulting `PublicKey` into
-///     `ProjectivePoint` for efficient arithmetic.
+/// The input must be a valid hex-encoded SEC1 point (compressed or uncompressed).
+/// The resulting point is validated against the secp256k1 curve equation and
+/// converted to projective coordinates for efficient subsequent arithmetic.
 ///
-/// ### Error Handling
-/// Returns `InvalidPublicKey` if the point is invalid, the prefix is
-/// unrecognized, or the key is the "Point at Infinity".
+/// # Errors
+///
+/// Returns [`FindError::HexError`] if the string is not valid hex.
+///
+/// Returns [`FindError::InvalidPublicKey`] if the decoded bytes do not form
+/// a valid SEC1 public key (wrong prefix, off-curve coordinates, or the
+/// point-at-infinity).
+///
+/// # Examples
+///
+/// ```
+/// use find::ecc;
+///
+/// let hex = "03203e7f72545397aa5719d2972c40eb44ecdebc784e6618c28d5796852edbaa57";
+/// let p = ecc::parse_pubkey(hex).unwrap();
+/// ```
 #[instrument(skip(hex_str), level = "debug")]
 pub fn parse_pubkey(hex_str: &str) -> Result<ProjectivePoint> {
-    // Hex decoding using the 'hex' crate; failure maps to FindError::HexError.
     let bytes = hex::decode(hex_str).map_err(FindError::from)?;
     if bytes.is_empty() {
         return Err(FindError::InvalidPublicKey(
@@ -51,31 +47,42 @@ pub fn parse_pubkey(hex_str: &str) -> Result<ProjectivePoint> {
         ));
     }
 
-    // PublicKey::from_sec1_bytes enforces full SEC1 compliance and curve checks.
     let pubkey = PublicKey::from_sec1_bytes(&bytes)
         .map_err(|e| FindError::InvalidPublicKey(e.to_string()))?;
 
-    // We convert to Projective for O(1) point addition later.
     Ok(pubkey.to_projective())
 }
 
-/// Returns the standard secp256k1 generator point $G$.
+/// Returns the standard secp256k1 generator point \(G\).
 ///
-/// $G$ is the predefined base point that generates the cyclic
-/// group $\mathbb{G}$ of prime order $n$.
+/// \(G\) is the predefined base point that generates the cyclic group of
+/// prime order \(n\).
 #[inline(always)]
 pub fn generator() -> ProjectivePoint {
     ProjectivePoint::GENERATOR
 }
 
-/// Converts a hexadecimal string to a scalar field element $S \in \mathbb{F}_n$.
+/// Converts a hexadecimal string to a scalar field element \(s \in \mathbb{F}_n\).
 ///
-/// ### Safety Constraints
-/// - **Padding:** Left-pads inputs < 32 bytes with zeros to ensure alignment.
-/// - **Range Check:** Rejects values $\ge n$ to prevent malicious field overflows.
+/// The input is decoded as big-endian bytes. Values shorter than 32 bytes are
+/// left-padded with zeros; values longer than 32 bytes are truncated to the
+/// least-significant 32 bytes. The resulting scalar must be strictly less than
+/// the curve order \(n\).
 ///
-/// ### Mathematical Invariant
-/// All resulting scalars are valid elements of the scalar field $\mathbb{F}_n$.
+/// # Errors
+///
+/// Returns [`FindError::HexError`] if the string is not valid hex or is empty.
+///
+/// Returns [`FindError::EccError`] if the decoded value is greater than or
+/// equal to the curve order \(n\).
+///
+/// # Examples
+///
+/// ```
+/// use find::ecc;
+///
+/// let s = ecc::hex_to_scalar("01").unwrap();
+/// ```
 pub fn hex_to_scalar(hex_str: &str) -> Result<Scalar> {
     let bytes = hex::decode(hex_str).map_err(FindError::from)?;
     if bytes.is_empty() {
@@ -83,30 +90,27 @@ pub fn hex_to_scalar(hex_str: &str) -> Result<Scalar> {
     }
     let mut fixed_bytes = [0u8; 32];
 
-    // Optimization: avoid extra allocation by slicing directly into fixed_bytes.
-    // bounds check is redundant since len <= bytes.len() by definition.
     let len = bytes.len().min(32);
     let src = &bytes[..len];
     fixed_bytes[32 - src.len()..].copy_from_slice(src);
 
-    // from_repr performs the range check against curve order n.
     Option::from(Scalar::from_repr(fixed_bytes.into()))
         .ok_or_else(|| FindError::EccError("Scalar value exceeds curve order n".to_string()))
 }
 
-/// Computes $P = d \cdot G$ using fixed-base scalar multiplication.
+/// Computes \(P = d \cdot G\) using fixed-base scalar multiplication.
 ///
-/// Utilizes underlying `k256` constant-time windowed multiplication to
-/// ensure execution-time stability.
+/// This is the primary operation used during the search sweep to generate
+/// candidate points.
 #[inline(always)]
 pub fn scalar_mul_g(d: &Scalar) -> ProjectivePoint {
     ProjectivePoint::GENERATOR * d
 }
 
-/// Computes the point difference $R = P - Q$ in Projective coordinates.
+/// Computes the point difference \(R = P - Q\) in projective coordinates.
 ///
-/// Point subtraction is implemented as $P + (-Q)$, where $-Q$ is the
-/// additive inverse $(X: -Y: Z)$.
+/// Subtraction is performed as \(P + (-Q)\), where \(-Q\) is the additive
+/// inverse.
 #[inline(always)]
 pub fn subtract(p: &ProjectivePoint, q: &ProjectivePoint) -> ProjectivePoint {
     p - q
@@ -114,20 +118,19 @@ pub fn subtract(p: &ProjectivePoint, q: &ProjectivePoint) -> ProjectivePoint {
 
 /// Extracts the 32-byte hexadecimal X-coordinate of an elliptic curve point.
 ///
-/// ### Important Lifecycle Note
-/// This function triggers a **Normalization** step where the Projective $(X:Y:Z)$
-/// coordinates are converted to Affine $(x, y)$ via modular inversion of $Z$.
-/// This is the most computationally expensive part of the coordinate extraction.
+/// This operation normalizes the point from projective to affine coordinates,
+/// which involves a modular inversion and is therefore expensive. Callers should
+/// batch such extractions whenever possible.
 ///
-/// ### Invariants
-/// Handles the identity point (Point at Infinity) gracefully by returning a
-/// zero-filled X-coordinate. Callers should guard against identity inputs if
-/// they require different behavior.
+/// # Behavior
+///
+/// Returns a 64-character lower-case hex string representing the 32-byte
+/// X-coordinate. If the input is the point-at-infinity, returns a string of
+/// 64 zeros.
 pub fn to_hex_x(p: &ProjectivePoint) -> String {
-    let affine = p.to_affine(); // Normalization (Inversion)
+    let affine = p.to_affine();
     let encoded = affine.to_encoded_point(false);
 
-    // Identity point (O) has no affine X-coordinate; return canonical zero representation.
     let x = match encoded.x() {
         Some(x) => x,
         None => {
@@ -141,7 +144,7 @@ pub fn to_hex_x(p: &ProjectivePoint) -> String {
 mod tests {
     use super::*;
 
-    /// Verifies that compressed SEC1 keys parse correctly.
+    /// Verifies that a compressed SEC1 key parses successfully.
     #[test]
     fn test_parse_valid_compressed() {
         let hex = "03203e7f72545397aa5719d2972c40eb44ecdebc784e6618c28d5796852edbaa57";
@@ -149,7 +152,7 @@ mod tests {
         assert!(res.is_ok());
     }
 
-    /// Verifies that padding logic correctly handles short scalar hex strings.
+    /// Verifies that short scalar strings are left-padded to 32 bytes.
     #[test]
     fn test_hex_to_scalar_padding() {
         let hex = "01";
@@ -157,7 +160,7 @@ mod tests {
         assert_eq!(s, Scalar::from(1u64));
     }
 
-    /// Verifies the identity P - Q == P + (-Q).
+    /// Verifies that subtraction matches the definition \(P - Q = P + (-Q)\).
     #[test]
     fn test_sub_definition_consistency() {
         let p = scalar_mul_g(&Scalar::from(12345u64));
@@ -169,7 +172,7 @@ mod tests {
         assert_eq!(res_sub, res_add_neg, "P - Q must equal P + (-Q)");
     }
 
-    /// Verifies the self-subtraction identity P - P == O (Identity).
+    /// Verifies that \(P - P = \mathcal{O}\) (the identity point).
     #[test]
     fn test_sub_self_identity() {
         let p = scalar_mul_g(&Scalar::from(42u64));
@@ -182,7 +185,7 @@ mod tests {
         );
     }
 
-    /// Verifies the zero-element identity P - O == P.
+    /// Verifies that subtraction with the identity point behaves as expected.
     #[test]
     fn test_sub_zero_element() {
         let p = scalar_mul_g(&Scalar::from(100u64));
@@ -192,7 +195,7 @@ mod tests {
         assert_eq!(subtract(&o, &p), -p, "O - P must equal -P");
     }
 
-    /// Verifies the anticommutative property P - Q == -(Q - P).
+    /// Verifies the anticommutative property \(P - Q = -(Q - P)\).
     #[test]
     fn test_sub_anticommutative() {
         let p = scalar_mul_g(&Scalar::from(555u64));
@@ -204,21 +207,21 @@ mod tests {
         assert_eq!(left, right, "P - Q must equal -(Q - P)");
     }
 
-    /// Verifies that empty string is rejected by parse_pubkey.
+    /// Verifies that an empty string is rejected by [`parse_pubkey`].
     #[test]
     fn test_parse_pubkey_empty_string() {
         let res = parse_pubkey("");
         assert!(res.is_err(), "Empty hex string must be rejected");
     }
 
-    /// Verifies that empty string is rejected by hex_to_scalar.
+    /// Verifies that an empty string is rejected by [`hex_to_scalar`].
     #[test]
     fn test_hex_to_scalar_empty_string() {
         let res = hex_to_scalar("");
         assert!(res.is_err(), "Empty hex string must be rejected");
     }
 
-    /// Verifies that to_hex_x handles the identity point gracefully.
+    /// Verifies that [`to_hex_x`] handles the identity point gracefully.
     #[test]
     fn test_to_hex_x_identity_point() {
         let identity = ProjectivePoint::IDENTITY;
@@ -236,7 +239,7 @@ mod tests {
         use proptest::prelude::*;
 
         proptest! {
-            /// Invariant: (P - Q) + Q == P (Reversibility).
+            /// Invariant: \((P - Q) + Q = P\) (reversibility).
             #[test]
             fn prop_sub_reversibility(
                 d1 in 1u64..1000000u64,
@@ -251,8 +254,7 @@ mod tests {
                 assert_eq!(recovered, p, "(P - Q) + Q must equal P");
             }
 
-            /// Invariant: Resulting point must always satisfy the curve equation.
-            /// (In k256, ProjectivePoint arithmetic preserves curve membership).
+            /// Invariant: the result of subtraction is always a valid curve point.
             #[test]
             fn prop_sub_curve_membership(
                 d1 in 1u64..1000000u64,
@@ -262,8 +264,6 @@ mod tests {
                 let q = scalar_mul_g(&Scalar::from(d2));
                 let res = subtract(&p, &q);
 
-                // to_affine() triggers conversion and coordinate validation and normalization.
-                // If it doesn't panic and we can extract coordinates, it's valid.
                 let _ = res.to_affine();
             }
         }

@@ -2,59 +2,64 @@
 // Released under MIT OR Apache-2.0. See LICENSE-MIT or LICENSE-APACHE.
 // THIS SOFTWARE IS FOR EDUCATIONAL AND RESEARCH PURPOSES ONLY.
 
-//! Unified error model for production-grade reliability and system resilience.
+//! Unified error model for the `find` system.
 //!
-//! # 🔬 Principal Design
-//! This module defines the `FindError` hierarchy, which categorizes all
-//! possible failure modes into a structured system using `thiserror`.
-//!
-//! ## 📐 Architectural Justification
-//! By using a domain-specific error enum, we ensure that:
-//! 1.  **Context is Preserved:** Errors across library boundaries (e.g., `k256`,
-//!     `std::io`) are wrapped with application-specific context.
-//! 2.  **Actionability:** Callers can programmatically distinguish between
-//!     transient I/O failures (recoverable) and fatal cryptographic mismatches.
-//! 3.  **Type Safety:** The system avoids the use of `Box<dyn Error>` in
-//!     internal logic, guaranteeing deterministic failure handling.
+//! Every fallible operation in the crate returns [`Result<T>`], which uses
+//! [`FindError`] as its error type. This guarantees that callers can
+//! programmatically distinguish between transient failures (e.g. I/O) and
+//! fatal cryptographic mismatches.
 
 use thiserror::Error;
 
-/// Core error hierarchy for the `find` system.
+/// The single error type used throughout the crate.
+///
+/// Variants are ordered by subsystem: ECC, integrity, parsing, I/O, format,
+/// serialization, and cache integrity.
 #[derive(Error, Debug)]
 pub enum FindError {
-    /// Failure during elliptic curve arithmetic or field validation.
-    /// Typically indicates a scalar overflow or identity point encounter.
+    /// An error originating from elliptic-curve arithmetic or field validation.
+    ///
+    /// This typically indicates a scalar overflow or an unexpected identity
+    /// point encountered during computation.
     #[error("ECC error: {0}")]
     EccError(String),
 
-    /// Research integrity failure: checkpoint state does not match recalculated point.
+    /// A research-integrity violation detected during checkpoint verification.
+    ///
+    /// This indicates that a persisted checkpoint does not match the
+    /// recalculated curve point, suggesting data corruption or a logic change.
     #[error("Research integrity violation: {0}")]
     ResearchIntegrityError(String),
 
-    /// Failure to parse a SEC1 public key. This indicates that the input
-    /// violates the SEC1 v2.0 standard for secp256k1 points.
+    /// The provided public key could not be parsed as a valid SEC1 point.
     #[error("Invalid public key format: {0}")]
     InvalidPublicKey(String),
 
-    /// Failure in underlying I/O operations (checkpointing, logging, caches).
-    /// Primarily used for persistence-layer resilience.
+    /// An underlying I/O operation failed.
+    ///
+    /// This covers checkpoint writes, cache reads, directory creation, and
+    /// log appender failures.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// Failure in hexadecimal decoding; indicates malformed user input or
-    /// corrupted variant data.
+    /// Hexadecimal decoding failed.
+    ///
+    /// This usually means the input string contains characters outside the
+    /// `0-9a-fA-F` range or has an odd length.
     #[error("Hex decoding error: {0}")]
     HexError(#[from] hex::FromHexError),
 
-    /// Failure to serialize search states or variants to JSON.
+    /// JSON serialization or deserialization failed.
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
 
-    /// Cache file integrity check failed (e.g., size not a multiple of 32 bytes,
-    /// or truncated file detected during read).
+    /// A cache file is structurally invalid.
+    ///
+    /// The binary cache format requires every entry to be exactly 32 bytes.
+    /// A file size that is not a multiple of 32 triggers this error.
     #[error("Cache file corrupted: {0}")]
     CacheCorrupted(String),
 }
 
-/// Convenience alias for operations using the unified `FindError` model.
+/// Convenience alias for [`std::result::Result`] parameterized with [`FindError`].
 pub type Result<T> = std::result::Result<T, FindError>;
