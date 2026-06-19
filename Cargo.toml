@@ -6,7 +6,10 @@ rust-version = "1.70"
 description = "A high-performance Rust system for secp256k1 cryptographic research and educational discovery."
 authors = ["Sachin <https://github.com/sachn-cs>"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/sachn-cs?tab=repositories"
+repository = "https://github.com/sachn-cs/find"
+homepage = "https://github.com/sachn-cs/find"
+documentation = "https://docs.rs/find"
+bugs = "https://github.com/sachn-cs/find/issues"
 readme = "README.md"
 categories = ["cryptography", "command-line-utilities"]
 keywords = ["bitcoin", "secp256k1", "ecc", "search", "cryptography"]

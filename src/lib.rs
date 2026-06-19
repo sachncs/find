@@ -15,6 +15,8 @@
 //! - [`orchestrator`] — High-level session orchestration that wires the layers together.
 //! - [`error`] — Unified error type used across all layers.
 
+#![warn(missing_docs)]
+
 pub mod ecc;
 pub mod error;
 pub mod orchestrator;

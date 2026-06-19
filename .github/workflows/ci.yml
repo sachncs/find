@@ -69,6 +69,17 @@ jobs:
       - run: cargo install cargo-audit --locked
       - run: cargo audit
 
+  deny:
+    name: License & Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check all
+
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest

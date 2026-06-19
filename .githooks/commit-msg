@@ -1,0 +1,39 @@
+#!/bin/bash
+
+# Git commit-msg hook for Conventional Commits validation
+# See: https://www.conventionalcommits.org/
+
+commit_msg_file="$1"
+commit_msg=$(cat "$commit_msg_file")
+
+# Conventional Commits pattern
+# Format: <type>[optional scope]: <description>
+# Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
+pattern="^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)(\([a-z0-9-]+\))?: .{1,}"
+
+if ! echo "$commit_msg" | grep -qE "$pattern"; then
+    echo "ERROR: Invalid commit message format."
+    echo ""
+    echo "Commit message must follow Conventional Commits:"
+    echo "  <type>[optional scope]: <description>"
+    echo ""
+    echo "Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert"
+    echo ""
+    echo "Examples:"
+    echo "  feat(search): add GPU acceleration"
+    echo "  fix(ecc): handle identity point"
+    echo "  docs: update README"
+    echo "  chore(deps): update dependencies"
+    echo ""
+    echo "Your message: $commit_msg"
+    exit 1
+fi
+
+# Check subject line length (max 72 characters recommended)
+subject=$(echo "$commit_msg" | head -n 1)
+if [ ${#subject} -gt 72 ]; then
+    echo "WARNING: Commit subject line is ${#subject} characters (recommended max 72)."
+    echo "Subject: $subject"
+fi
+
+exit 0

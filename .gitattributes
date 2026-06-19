@@ -1,0 +1,27 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Rust sources
+*.rs text diff=rust
+*.toml text
+
+# Documentation
+*.md text diff=markdown
+*.txt text
+
+# Configuration
+*.yml text
+*.yaml text
+*.json text
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.gz binary
+*.zip binary
+
+# Ensure lock file is not merged
+Cargo.lock -merge
