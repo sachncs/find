@@ -67,6 +67,13 @@ pub enum FindError {
 
 impl Clone for FindError {
     fn clone(&self) -> Self {
+        // Most variants clone directly. The two interesting cases:
+        //   - `Io` — `std::io::Error` is `Clone`; we rebuild an equivalent
+        //     error using the same `ErrorKind` and message.
+        //   - `SerializationError` — `serde_json::Error` is NOT `Clone`,
+        //     so we round-trip through `Error::io` with the original
+        //     message. The kind and message are preserved, but the
+        //     original column/line information is lost.
         match self {
             Self::EccError(s) => Self::EccError(s.clone()),
             Self::ResearchIntegrityError(s) => Self::ResearchIntegrityError(s.clone()),
@@ -83,6 +90,10 @@ impl Clone for FindError {
 
 impl PartialEq for FindError {
     fn eq(&self, other: &Self) -> bool {
+        // `serde_json::Error` does not implement `PartialEq`, so we cannot
+        // derive this. Instead, compare discriminants first (cheap
+        // short-circuit) and then fall back to string equality via the
+        // `Display` impl — which all variants produce a stable string for.
         use std::mem::discriminant;
         if discriminant(self) != discriminant(other) {
             return false;

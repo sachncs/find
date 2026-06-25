@@ -1,3 +1,19 @@
+//! Integration tests for the public search API.
+//!
+//! These tests cover:
+//! - boundary conditions on the search range (min/max digit widths),
+//! - edge-case scalar shapes (repeated digits, alternating patterns,
+//!   palindromes, single-digit),
+//! - property-based discovery: for any 6–8 digit decimal scalar `d`,
+//!   a sweep that contains `d` will recover it,
+//! - error handling on malformed hex inputs,
+//! - deterministic / idempotent output for fixed inputs.
+//!
+//! Pair with the KAT tests in [`kat`](super::kat) for low-level primitive
+//! checks and the differential tests in
+//! [`differential`](super::differential) for cross-implementation
+//! verification.
+
 use find::ecc;
 use find::search::{self, VariantIndex};
 use k256::elliptic_curve::PrimeField;

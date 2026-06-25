@@ -9,6 +9,15 @@
 //!
 //! Points are handled in projective coordinates during arithmetic and only
 //! normalized to affine when an X-coordinate must be extracted.
+//!
+//! # Side-channel stance
+//!
+//! **This module is not constant-time.** Scalar multiplication, modular
+//! inversion, and point comparison are all exposed to timing and cache
+//! side-channels. The tool is intended for educational and research use
+//! only; it MUST NOT be used to sign or verify messages where
+//! side-channel resistance is required. See [`docs/security.md`](../docs/security.md)
+//! for the full threat model.
 
 use crate::error::{FindError, Result};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
@@ -18,9 +27,12 @@ use tracing::instrument;
 
 /// Parses a public key from its SEC1 hexadecimal representation.
 ///
-/// The input must be a valid hex-encoded SEC1 point (compressed or uncompressed).
-/// The resulting point is validated against the secp256k1 curve equation and
-/// converted to projective coordinates for efficient subsequent arithmetic.
+/// The input must be a valid hex-encoded SEC1 point (compressed or
+/// uncompressed). Compressed form follows SEC 1 §2.3 (33 bytes, leading
+/// `0x02`/`0x03`); uncompressed form follows SEC 1 §2.4 (65 bytes, leading
+/// `0x04`). The resulting point is validated against the secp256k1 curve
+/// equation and converted to projective coordinates for efficient
+/// subsequent arithmetic.
 ///
 /// # Errors
 ///
@@ -62,7 +74,8 @@ pub fn generator() -> ProjectivePoint {
     ProjectivePoint::GENERATOR
 }
 
-/// Converts a hexadecimal string to a scalar field element \(s \in \mathbb{F}_n\).
+/// Converts a hexadecimal string to a scalar field element \(s \in \mathbb{F}_n\),
+/// where \(n\) is the secp256k1 curve order (SEC 2 §2.4.1).
 ///
 /// The input is decoded as big-endian bytes. Values shorter than 32 bytes are
 /// left-padded with zeros; values longer than 32 bytes are truncated to the
@@ -90,6 +103,13 @@ pub fn hex_to_scalar(hex_str: &str) -> Result<Scalar> {
     }
     let mut fixed_bytes = [0u8; 32];
 
+    // Big-endian, 32-byte-wide canonical encoding:
+    //   - inputs shorter than 32 bytes are zero-padded on the LEFT
+    //     (high-order side),
+    //   - inputs longer than 32 bytes are truncated to the LEAST-significant
+    //     32 bytes (i.e. the rightmost 32 bytes of the decoded stream).
+    // This matches the convention used by Bitcoin and the k256 type, where
+    // the low-order byte of the scalar is the rightmost byte of the buffer.
     let len = bytes.len().min(32);
     let src = &bytes[..len];
     fixed_bytes[32 - src.len()..].copy_from_slice(src);
@@ -129,11 +149,17 @@ pub fn subtract(p: &ProjectivePoint, q: &ProjectivePoint) -> ProjectivePoint {
 /// 64 zeros.
 pub fn to_hex_x(p: &ProjectivePoint) -> String {
     let affine = p.to_affine();
+    // Uncompressed SEC1 (65 bytes: 0x04 || X || Y) — we discard the Y.
     let encoded = affine.to_encoded_point(false);
 
     let x = match encoded.x() {
         Some(x) => x,
         None => {
+            // The point-at-infinity has no X-coordinate. We canonicalise to
+            // 64 zeros (32 bytes of 0x00) so the orchestrator's X-byte
+            // comparisons always operate on a well-defined width. The X
+            // value is meaningless for the identity and will simply not
+            // match any variant in the index.
             return "0000000000000000000000000000000000000000000000000000000000000000".to_string();
         }
     };
@@ -142,9 +168,14 @@ pub fn to_hex_x(p: &ProjectivePoint) -> String {
 
 /// Returns `true` if the point is the point-at-infinity (the additive identity).
 ///
-/// This is a constant-time comparison against `ProjectivePoint::IDENTITY`; it
-/// is suitable for use in the search hot path because it does not perform a
+/// This is an equality check against `ProjectivePoint::IDENTITY`; it is
+/// suitable for use in the search hot path because it does not perform a
 /// modular inversion.
+///
+/// Note: this comparison is *not* constant-time in the side-channel sense —
+/// it short-circuits on the first differing coordinate. The wrapper as a
+/// whole is not constant-time; see the module-level doc for the threat
+/// model.
 #[inline(always)]
 pub fn is_identity(p: &ProjectivePoint) -> bool {
     *p == ProjectivePoint::IDENTITY
@@ -167,6 +198,9 @@ pub fn x_bytes(p: &ProjectivePoint) -> Option<[u8; 32]> {
         return None;
     }
     let affine = p.to_affine();
+    // Uncompressed SEC1 encoding (0x04 || X || Y); we drop the Y and keep
+    // the 32-byte big-endian X. This is the on-disk cache format too —
+    // see ADR-0006.
     let encoded = affine.to_encoded_point(false);
     encoded.x().map(|x| {
         let mut b = [0u8; 32];

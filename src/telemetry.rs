@@ -35,6 +35,9 @@ pub fn init_tracing<P: AsRef<Path>>(
 
     tracing_subscriber::registry()
         .with(
+            // Honour the `RUST_LOG` environment variable if set; otherwise
+            // fall back to the `INFO` level so the tool is chatty enough
+            // for audit logs without being noisy.
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive(tracing::Level::INFO.into()),
         )
@@ -42,6 +45,9 @@ pub fn init_tracing<P: AsRef<Path>>(
         .with(
             tracing_subscriber::fmt::layer()
                 .with_writer(non_blocking)
+                // ANSI colour codes render only in terminals; suppressing
+                // them in the file appender keeps the log file plain-text
+                // and grep-friendly.
                 .with_ansi(false),
         )
         .init();
@@ -57,6 +63,10 @@ pub fn init_tracing<P: AsRef<Path>>(
 pub fn install_rayon_panic_handler() {
     let _ = rayon::ThreadPoolBuilder::new()
         .panic_handler(|info| {
+            // Rayon hands us a `Box<dyn Any + Send>`. The most common
+            // payload is the literal `&str` from `panic!("...")`, with
+            // `String` from `panic!("...{}", x)` next; we try them in
+            // order and fall back to a generic message otherwise.
             let msg = info
                 .downcast_ref::<&str>()
                 .copied()

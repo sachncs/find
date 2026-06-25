@@ -13,7 +13,7 @@ The tool is for **educational and research use only**. It is not designed to pro
 | **Cryptographic correctness.** A bug in scalar arithmetic, modular reduction, or X-coordinate extraction could produce silently wrong candidates. | Property-based tests, integration tests with known scalars, deterministic RNG for randomized discovery, `k256` as the cryptographic primitive. |
 | **File-system race conditions.** Concurrent writes to the checkpoint or cache could corrupt the state. | Write-then-rename atomic persistence (see [ADR-0003](adr/0003-atomic-checkpointing.md)); parent-directory `fsync` on Unix; `Mutex<File>` in `FileCacheWriter`. |
 | **Cache corruption.** A truncated or modified cache file could produce wrong matches. | Size must be a multiple of 32 bytes; `CacheCorrupted` error otherwise (see [ADR-0006](adr/0006-binary-cache-format.md)). |
-| **Memory safety.** A use-after-free, buffer overflow, or out-of-bounds access. | No `unsafe` blocks in the project (`grep -r 'unsafe' src/` returns no matches in application code). |
+| **Memory safety.** A use-after-free, buffer overflow, or out-of-bounds access. | One reviewed `unsafe` call (`libc::fsync` in `src/persistence.rs`); no other `unsafe` in application code. |
 | **Dependency vulnerabilities.** A bug in `k256`, `rayon`, or another dependency. | `cargo audit` in CI on every push (`.github/workflows/ci.yml`); `cargo deny check` for license and dependency-graph auditing. |
 | **Panic in a Rayon worker.** A panic in one worker could abort the entire process. | Custom `panic_handler` in `src/main.rs` that logs and continues; `Mutex::lock()` callers tolerate poisoning via `into_inner()`. |
 

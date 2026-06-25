@@ -419,7 +419,7 @@ If verification fails, the process exits with `ResearchIntegrityError`. The user
 
 See [security.md](security.md) for the full security model. The architecture-level points:
 
-- **No `unsafe` blocks** in application code (a single `unsafe` call in `persistence.rs` for `libc::fsync`, which is reviewed).
+- **One reviewed `unsafe` call** in application code (`libc::fsync` in `persistence.rs`); no other application-code `unsafe`.
 - **Atomic state persistence** via write-then-rename and parent-directory `fsync`.
 - **Input validation** at the boundary (`parse_pubkey`).
 - **No network I/O** — the tool does not require or use the network.

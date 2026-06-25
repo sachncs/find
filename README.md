@@ -107,23 +107,29 @@ All project documentation lives under [`docs/`](docs/README.md). The structure i
 ```
 find/
 ├── src/
-│   ├── lib.rs          # Library root; exports ecc, error, search
+│   ├── lib.rs          # Library root; exports ecc, error, search, config, telemetry
 │   ├── main.rs         # CLI wrapper; tracing bootstrap
+│   ├── config.rs       # Session configuration types and validation
 │   ├── ecc.rs          # SEC1 parsing, point arithmetic, scalar conversion
-│   ├── search.rs       # Pure search engine, VariantIndex, binary caching
 │   ├── error.rs        # Unified FindError hierarchy
 │   ├── orchestrator.rs # Session management and resume logic
-│   └── persistence.rs  # Checkpoint read/write with atomic operations
+│   ├── persistence.rs  # Checkpoint read/write with atomic operations
+│   ├── search.rs       # Pure search engine, VariantIndex, binary caching
+│   └── telemetry.rs    # Tracing initialization helpers
 ├── tests/
 │   ├── audit.rs        # End-to-end key recovery verification
+│   ├── differential.rs # Cross-implementation verification vs libsecp256k1
 │   ├── integration.rs  # Randomized discovery and edge case tests
+│   ├── kat.rs          # Known-Answer Tests for crypto primitives
 │   └── orchestrator.rs # Session flow and checkpoint tests
 ├── benches/
 │   └── bench.rs        # Criterion micro-benchmarks
+├── fuzz/               # cargo-fuzz targets (parse_pubkey, hex_to_scalar, scalar_mul_g)
 ├── docs/               # Architecture, algorithms, operations, ADRs
 ├── .github/            # CI/CD, issue templates, dependabot
 ├── Cargo.toml          # Package metadata and dependencies
 ├── Makefile            # Developer automation commands
+├── deny.toml           # cargo-deny license/advisory policy
 └── README.md           # This file
 ```
 

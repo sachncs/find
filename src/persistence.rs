@@ -24,6 +24,9 @@ use tracing::instrument;
 /// A checkpoint stores the last completed scalar index, the associated public
 /// key, and an integrity anchor (the X-coordinate of `last_j * G`). The
 /// anchor allows [`Checkpoint::verify`] to detect corruption.
+///
+/// See [ADR-0003](../docs/adr/0003-atomic-checkpointing.md) for the
+/// write-then-rename + parent-directory `fsync` design rationale.
 #[derive(Serialize, Deserialize)]
 pub struct Checkpoint {
     /// The last successfully completed scalar index.
@@ -57,6 +60,10 @@ impl Checkpoint {
     /// If the pubkeys match but the recalculated X-coordinate does not equal
     /// [`last_x`](Checkpoint::last_x), a [`FindError::ResearchIntegrityError`]
     /// is returned.
+    ///
+    /// Correctness of the recalculation depends on `k256`'s scalar
+    /// multiplication being correct; this is independently verified by
+    /// `tests/differential.rs` against the reference C `libsecp256k1`.
     ///
     /// # Errors
     ///
@@ -129,6 +136,9 @@ impl Checkpoint {
 /// is created on first use and may be pre-allocated with
 /// [`FileCacheWriter::preallocate`] to reduce fragmentation.
 ///
+/// See [ADR-0006](../docs/adr/0006-binary-cache-format.md) for the
+/// on-disk format, pre-allocation strategy, and EOF-validity rules.
+///
 /// On Unix this implementation uses `pwrite` via [`std::os::unix::fs::FileExt`];
 /// on other platforms it falls back to a mutex-protected seek-and-write. The
 /// mutex contention is negligible because each write is a single batch of
@@ -165,6 +175,9 @@ impl FileCacheWriter {
     /// Returns [`FindError::Io`] if the file descriptor does not support
     /// truncation.
     pub fn preallocate(&self, len: u64) -> Result<()> {
+        // The cache file is append-only and contention is rare; a poisoned
+        // mutex implies another writer thread panicked mid-write, which we
+        // cannot recover from safely.
         let file = self.file.lock().expect("file cache writer mutex poisoned");
         file.set_len(len).map_err(FindError::Io)?;
         Ok(())
@@ -173,6 +186,8 @@ impl FileCacheWriter {
 
 impl CacheWriter for FileCacheWriter {
     fn write_block(&self, offset: u64, data: &[u8]) -> std::io::Result<()> {
+        // Mutex poisoning means a writer thread panicked while holding the
+        // lock; we cannot recover the file handle's state, so we abort.
         #[cfg(unix)]
         {
             use std::os::unix::fs::FileExt;
@@ -239,7 +254,13 @@ pub fn perform_cached_sweep(
                 }
                 j += 1;
             }
+            // `read_exact` returns `UnexpectedEof` precisely when the file
+            // ends mid-`buffer` read. Because we already validated that
+            // `file_size % 32 == 0` above, hitting this branch means we
+            // have consumed the entire cache cleanly — not a truncation.
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            // Any other I/O error is a real failure (e.g. a concurrent
+            // truncating writer or a hardware fault) and must be surfaced.
             Err(e) => return Err(FindError::Io(e)),
         }
     }
@@ -261,6 +282,10 @@ pub fn perform_cached_sweep(
 /// The absolute path of the written file.
 #[instrument(skip(variants, dir_path), level = "info")]
 pub fn save_variants_to_json(variants: &[OffsetVariant], dir_path: &str) -> Result<String> {
+    // BTreeMap (not HashMap) is used so that the on-disk JSON output is
+    // deterministically ordered by X-coordinate. This makes the file
+    // byte-stable across runs for the same public key, which is valuable
+    // for audit diffing and reproducibility checks.
     let mut map = BTreeMap::new();
     for var in variants {
         let x_hex = hex::encode(var.x_bytes);

@@ -1,3 +1,22 @@
+//! Orchestrator-level integration tests.
+//!
+//! These tests drive the high-level [`find::orchestrator::run`] entry
+//! point and verify:
+//! - successful discovery of a small known scalar (`d = 5`),
+//! - input validation: malformed public keys are rejected before
+//!   the search starts,
+//! - configuration validation: [`Config::validate`] rejects empty
+//!   public keys,
+//! - checkpoint resume: a session that wrote a checkpoint can be
+//!   loaded and resumed, finding the same match without redoing
+//!   completed work,
+//! - cache integration: the binary cache path produces the same match
+//!   as the direct sweep path.
+//!
+//! Pair with [`audit`](super::audit) for known-scalar end-to-end
+//! recovery and [`differential`](super::differential) for
+//! cross-implementation primitive verification.
+
 use find::config::Config;
 use find::ecc;
 use find::orchestrator::run;

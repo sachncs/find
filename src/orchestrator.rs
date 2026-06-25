@@ -85,14 +85,18 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
 
     loop {
         let chunk_start = current_j.saturating_add(1).max(MIN_J);
-        // Detect overflow: if current_j + DEFAULT_CACHE_CHUNK_SIZE wraps, chunk_end
-        // will be less than current_j, meaning we've exhausted the space.
+        // Detect overflow: `saturating_add` returns `u64::MAX` on overflow,
+        // so the comparison `chunk_end < current_j` fires only when we've
+        // reached the end of the 64-bit scalar space and cannot extend.
         let chunk_end = current_j.saturating_add(DEFAULT_CACHE_CHUNK_SIZE);
         if chunk_end < current_j {
             info!("Search space exhausted (overflow detected).");
             break;
         }
 
+        // One cache file per chunk, named by the chunk's inclusive lower
+        // bound. Reusing an existing cache file replays the segment from
+        // disk on subsequent runs.
         let cache_path = checkpoints_dir.join(format!("chunk_{}.bin", chunk_start));
 
         info!(
@@ -100,6 +104,14 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
             chunk_start, chunk_end
         );
 
+        // Three execution strategies, in priority order:
+        //   (a) cache hit  — replay the precomputed X-coordinates from disk;
+        //   (b) cache miss + cache_points — precompute the cache, writing
+        //       X-coords to disk and checking the index live; if a match
+        //       surfaces mid-precompute, `early` short-circuits before
+        //       re-running the (now-complete) cached sweep;
+        //   (c) cache miss, no caching — pure CPU-bound parallel sweep,
+        //       discarding the work after the segment.
         let sweep_result = if cache_path.exists() {
             info!("Cache hit: {}", cache_path.display());
             persistence::perform_cached_sweep(&index, &cache_path, chunk_start)?
@@ -113,6 +125,8 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
                 search::precompute_chunk(chunk_start, chunk_end, &writer, Some(&index), &progress)?;
 
             if early.is_some() {
+                // A match was found mid-precompute; skip the redundant
+                // cached-sweep pass on the just-written file.
                 early
             } else {
                 persistence::perform_cached_sweep(&index, &cache_path, chunk_start)?
@@ -127,6 +141,11 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
             return Ok(Some(m));
         }
 
+        // Advance the cursor and persist a checkpoint even when the
+        // current segment found nothing — the integrity anchor (last_x)
+        // is recomputed at the segment boundary so a future resume can
+        // verify that the checkpoint's reported scalar is consistent
+        // with the original public key. See ADR-0003.
         current_j = chunk_end;
         let boundary_scalar = k256::Scalar::from(current_j);
         let boundary_p = ecc::scalar_mul_g(&boundary_scalar);
@@ -139,6 +158,8 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
         }
         .save_atomic(&checkpoint_file)?;
 
+        // 32 × TRILLION = 32 chunks of DEFAULT_CACHE_CHUNK_SIZE (1B) scalars
+        // each. Useful as a coarse-grained audit-breadcrumb in long runs.
         if current_j > 0 && current_j % (32 * TRILLION) == 0 {
             info!("Audit boundary: 32 trillion steps reached.");
         }

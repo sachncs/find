@@ -243,7 +243,7 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
 
 The tool is designed with security in mind:
 
-- No `unsafe` blocks in application code
+- One reviewed `unsafe` call (`libc::fsync` in `src/persistence.rs`); no other application-code `unsafe`
 - Input validation on all operations
 - Checkpoint integrity verification
 - Atomic file operations

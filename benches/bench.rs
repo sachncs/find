@@ -28,6 +28,9 @@ fn bench_batch_normalization(c: &mut Criterion) {
 
     group.bench_function("single_normalization", |b| {
         b.iter(|| {
+            // `black_box` prevents the optimizer from hoisting the
+            // normalization out of the timed region. Each iteration
+            // would otherwise be observably free to LLVM.
             for p in &points {
                 std::hint::black_box(p.to_affine());
             }
@@ -38,6 +41,8 @@ fn bench_batch_normalization(c: &mut Criterion) {
         let mut affines = vec![k256::AffinePoint::IDENTITY; points.len()];
         b.iter(|| {
             k256::ProjectivePoint::batch_normalize(&points, &mut affines);
+            // `black_box(())` forces the optimizer to treat the result
+            // as observed, so the entire batch op is not elided.
             std::hint::black_box(());
         })
     });
@@ -61,6 +66,9 @@ fn bench_index_lookup(c: &mut Criterion) {
 
     c.bench_function("flat_index_match", |b| {
         b.iter(|| {
+            // `black_box` on the `j` argument is unnecessary (it's a u64,
+            // trivially observable), but we still pass it to the lookup
+            // to exercise the same call path used by the orchestrator.
             std::hint::black_box(index.match_x(&test_x, 100));
         })
     });

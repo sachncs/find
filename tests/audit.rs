@@ -1,3 +1,15 @@
+//! End-to-end key recovery audit tests.
+//!
+//! These tests verify that the public pipeline (parse a public key, build
+//! a [`VariantIndex`], sweep a range, recover a candidate) actually
+//! produces the original private key for known scalars. They complement
+//! the randomized tests in [`integration`](super::integration) and the
+//! cross-implementation checks in [`differential`](super::differential) by
+//! pinning concrete known-answer scalars.
+//!
+//! The scalar `1234567890` is a long-standing small-scalar test vector in
+//! k256 / rust-secp256k1 and is used here as a recognisable anchor.
+
 use find::ecc;
 use find::search::{self, VariantIndex};
 use num_bigint::BigUint;

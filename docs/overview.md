@@ -15,7 +15,7 @@ The project is **not** intended for, and must not be used for, recovering privat
 ## Goals
 
 - **Mathematical rigor.** Every algorithm is documented with its derivation, complexity, and correctness argument in [algorithms.md](algorithms.md).
-- **Engineering excellence.** The codebase follows idiomatic Rust, contains no `unsafe` blocks, and uses dependency injection to keep the search domain free of I/O concerns. See [architecture.md](architecture.md) and the [ADRs](adr/README.md).
+- **Engineering excellence.** The codebase follows idiomatic Rust. It contains a single reviewed `unsafe` call in [`src/persistence.rs`](../src/persistence.rs) for `libc::fsync`; see [security.md](security.md) for the audit trail. The search domain is kept free of I/O concerns via the [`CacheWriter`](search.rs) trait. See [architecture.md](architecture.md) and the [ADRs](adr/README.md).
 - **Reproducibility.** The full test suite, benchmarks, and verification methodology are documented in [testing.md](testing.md) and [benchmarks.md](benchmarks.md).
 - **Maintainability.** Critical engineering decisions are captured as Architecture Decision Records under [docs/adr/](adr/README.md) so that future contributors understand the *why* behind the *what*.
 

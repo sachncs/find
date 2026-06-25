@@ -7,6 +7,14 @@
 //! This module contains no file I/O, no global mutable state, and no
 //! platform-specific code. All side effects are injected via explicit
 //! arguments (writers, progress counters).
+//!
+//! # Side-channel stance
+//!
+//! Variant generation, the `+ G` increment chain, and batch normalization
+//! are all CPU-hot-path operations that are **not constant-time**. They
+//! are appropriate for the research and educational scope of this tool,
+//! not for production signing. See [`docs/security.md`](../docs/security.md)
+//! for the threat model.
 
 use crate::ecc;
 use crate::error::{FindError, Result};
@@ -97,6 +105,11 @@ impl VariantIndex {
     ///
     /// - \(c_1 = V + j \pmod n\)
     /// - \(c_2 = V - j \pmod n\)
+    ///
+    /// Because X-coordinates do not distinguish the two Y-parities, every
+    /// match returns two candidates; the orchestrator or downstream code
+    /// is responsible for filtering the valid one. See
+    /// [ADR-0007](../docs/adr/0007-y-parity-ambiguity.md).
     ///
     /// # Arguments
     ///
@@ -244,7 +257,11 @@ pub trait CacheWriter: Send + Sync {
 ///
 /// The variants consist of 256 powers of two (\(2^0 \dots 2^{255}\)) and
 /// 256 cumulative sums (\(\sum_{i=0}^{k} 2^i = 2^{k+1} - 1\)). Variants that
-/// collapse to the point-at-infinity are skipped.
+/// collapse to the point-at-infinity are skipped — this is correctness-
+/// critical, not a performance optimisation: the identity has no X-
+/// coordinate, so an identity variant would match every sweep entry.
+/// See [ADR-0007](../docs/adr/0007-y-parity-ambiguity.md) for the
+/// related Y-parity discussion.
 ///
 /// # Performance
 ///
@@ -257,6 +274,9 @@ pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
 
     let mut pow = U256::ONE;
     for i in 0..256 {
+        // `Scalar::reduce` is constant-time reduction mod n. For all i < 256
+        // we have pow = 2^i < 2^256, which is far below n, so the reduction
+        // is effectively a no-op identity — the resulting scalar equals pow.
         let scalar = Scalar::reduce(pow);
         let shifted = p - ecc::scalar_mul_g(&scalar);
         if let Some(x) = affine_x_bytes(&shifted.to_affine()) {
@@ -267,11 +287,16 @@ pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
                 offset: u256_to_decimal(&pow),
             });
         } else {
+            // An identity variant has no X-coordinate and would match every
+            // sweep entry. Skipping is correctness-critical, not a perf opt.
             tracing::warn!("Variant 2^{} produced identity point; skipping", i);
         }
         pow <<= 1;
     }
 
+    // Cumulative-sum variants: cum_i = sum_{k=0..i} 2^k = 2^{i+1} - 1.
+    // The recurrence `cum = (cum << 1) | 1` doubles cum and sets the new
+    // low bit, generating 1, 3, 7, 15, … (i.e. 2^{i+1} - 1).
     let mut cum = U256::ONE;
     for i in 0..256 {
         let scalar = Scalar::reduce(cum);
@@ -284,6 +309,7 @@ pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
                 offset: u256_to_decimal(&cum),
             });
         } else {
+            // See the powers-of-two loop above for the rationale.
             tracing::warn!(
                 "Variant sum(2^0..2^{}) produced identity point; skipping",
                 i
@@ -319,7 +345,6 @@ pub fn perform_chunked_sweep(index: &VariantIndex, start: u64, end: u64) -> Opti
         return None;
     }
 
-    const BATCH_SIZE: u64 = 32;
     let range_len = end.saturating_sub(start).saturating_add(1);
     let num_batches = if range_len == 0 {
         0
@@ -336,6 +361,12 @@ pub fn perform_chunked_sweep(index: &VariantIndex, start: u64, end: u64) -> Opti
         let mut points = [ProjectivePoint::IDENTITY; MAX_BATCH];
         let mut affines = [AffinePoint::IDENTITY; MAX_BATCH];
 
+        // Bootstrap: one scalar multiplication to get (chunk_start)·G.
+        // After that, advance by adding G once per step — a mixed addition
+        // is ~12 field multiplications, vs. ~256 multiplications for a
+        // fresh scalar mul. This `+ G` chain is the dominant perf win of
+        // the search engine (~20× vs. independent scalar muls).
+        // See ADR-0002 for the full rationale.
         let mut current = ecc::scalar_mul_g(&Scalar::from(chunk_start));
         for p in points.iter_mut().take(count) {
             *p = current;
@@ -394,7 +425,6 @@ pub fn precompute_chunk<W: CacheWriter>(
         return Ok(None);
     }
 
-    const BATCH_SIZE: u64 = 32;
     let range_len = end.saturating_sub(start).saturating_add(1);
     let num_batches = if range_len == 0 {
         0
@@ -423,6 +453,10 @@ pub fn precompute_chunk<W: CacheWriter>(
             let mut points = [ProjectivePoint::IDENTITY; MAX_BATCH];
             let mut affines = [AffinePoint::IDENTITY; MAX_BATCH];
 
+            // `+ G` increment chain: see `perform_chunked_sweep` for the
+            // full rationale. One bootstrap scalar mul + (count - 1) mixed
+            // additions is ~20× faster than `count` independent scalar muls.
+            // See ADR-0002.
             let mut current = ecc::scalar_mul_g(&Scalar::from(chunk_start));
             for p in points.iter_mut().take(count) {
                 *p = current;
@@ -463,6 +497,8 @@ pub fn precompute_chunk<W: CacheWriter>(
                 return Ok(());
             }
 
+            // Cache-file byte offset for this batch's X-coordinates.
+            // BATCH_SIZE scalars × 32 bytes per X-coordinate (SEC1 X-only).
             let offset = batch_idx * BATCH_SIZE * 32;
             writer
                 .write_block(offset, &block[..block_len])

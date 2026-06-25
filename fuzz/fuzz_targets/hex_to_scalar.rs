@@ -18,8 +18,8 @@ fuzz_target!(|data: &[u8]| {
     };
 
     if let Ok(scalar) = find::ecc::hex_to_scalar(&hex_str) {
-        // If the conversion succeeded, the scalar must be valid: its
-        // canonical 32-byte representation must round-trip.
+        // If the conversion succeeded, the canonical 32-byte encoding
+        // returned by k256 must be exactly 32 bytes wide.
         let bytes = scalar.to_bytes();
         assert_eq!(bytes.len(), 32, "scalar bytes must be 32 bytes");
     }
