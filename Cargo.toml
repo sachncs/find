@@ -30,7 +30,7 @@ serde_json = "1.0"
 
 # Encoding & math
 hex = "0.4"
-num-bigint = "0.4"
+num-bigint = "0.5"
 
 # Parallelism
 rayon = "1.8"
@@ -47,13 +47,13 @@ libc = "0.2"
 [dev-dependencies]
 proptest = "1.5"
 tempfile = "3.10"
-rand = "0.9"
-rand_chacha = "0.9"
+rand = "0.10"
+rand_chacha = "0.10"
 criterion = "0.8"
 num-traits = "0.2"
 # secp256k1-sys: cross-implementation differential testing against the
 # reference C library. Bundles libsecp256k1 from source.
-secp256k1-sys = { version = "0.10", default-features = false, features = ["std"] }
+secp256k1-sys = { version = "0.13", default-features = false, features = ["std"] }
 
 [[bench]]
 name = "bench"
