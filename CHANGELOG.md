@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Commit Log
+
+Every commit on `master` is recorded here with `git commit id | date | why and what
+was changed reasoning`. Generated from `git log --pretty=format:'%h | %ad | %s'
+--date=short`. Rows below are in chronological order (oldest first).
+
+| Commit | Date | Why & What |
+|---|---|---|
+| `e41a3df` | 2026-04-13 | Initial 0.0.1 release: SEC1 pubkey parsing, scalar arithmetic, basic sweep, JSON output. Establishes the project skeleton. |
+| `15a159a` | 2026-04-15 | 0.0.2 release: improved ECC arithmetic, expanded error handling, parallel batch normalization, checkpoint support. |
+| `fdedc51` | 2026-04-25 | 0.1.0 release: orchestrator module, persistence module, integration/audit tests, refactored ECC. |
+| `19a70c7` | 2026-04-26 | 0.1.1 release: CI workflow on Ubuntu/macOS/Windows, PR template, CODEOWNERS, SECURITY.md. |
+| `7061521` | 2026-04-26 | 0.1.2 release: minor search optimization fix. |
+| `5bd58bd` | 2026-06-19 | ci(deps): bump actions/upload-artifact 4 → 7 — GitHub Action major version. |
+| `57f6e08` | 2026-06-19 | ci(deps): bump softprops/action-gh-release 2 → 3. |
+| `7b175bd` | 2026-06-19 | ci(deps): bump codecov/codecov-action 4 → 7. |
+| `f2e47d5` | 2026-06-19 | ci(deps): bump actions/checkout 4 → 7. |
+| `5832613` | 2026-06-19 | chore(deps): bulk Rust dep bump (9 updates). |
+| `11d6e7d` | 2026-06-20 | 0.1.3 release: prep cut for the dep-bump. |
+| `b2e7b89` | 2026-06-22 | ci(deps): bump actions/download-artifact 4 → 8. |
+| `e38fe38` | 2026-06-24 | Merge PR #6: actions/download-artifact-8. |
+| `c10bca1` | 2026-06-24 | Merge PR #5: rust-dependencies-9d23bf43ca. |
+| `68c4ceb` | 2026-06-24 | Merge PR #4: codecov-action-7. |
+| `40d9070` | 2026-06-24 | Merge PR #2: action-gh-release-3. |
+| `e332ed5` | 2026-06-24 | Merge PR #1: actions/upload-artifact-7. |
+| `944c73b` | 2026-06-24 | Merge PR #3: actions/checkout-7. |
+| `e07ac6e` | 2026-06-25 | 0.1.4 release. |
+| `cde2bfb` | 2026-06-26 | 0.1.5 release. |
+| `1753ab2` | 2026-06-26 | 0.1.6 release: hardening pass — extracted `config` and `telemetry` modules, added `BATCH_SIZE`/`VARIANT_COUNT` constants, `#[non_exhaustive]` on `FindError`/`SearchMatch`, KAT/differential tests, fuzz targets, ADRs 0007/0008. |
+| `f2748ad` | 2026-07-06 | chore(deps): bulk Rust dep bump (5 updates, including rand 0.9 → 0.10). |
+| `255954f` | 2026-07-06 | Merge PR #8: rust-dependencies-bc89137e2b. |
+| `dbb6ba8` | 2026-07-14 | docs(lib): expand crate-level docs with Mermaid dependency graph and Quick-Start doc-test. |
+| `f60485d` | 2026-07-14 | docs(main): expand binary-level docs with lifecycle and example. |
+| `303edca` | 2026-07-14 | docs(config): expand module docs and add usage examples. |
+| `72c49b6` | 2026-07-14 | docs(ecc): expand module docs and add per-function examples + security notes. |
+| `4d327dc` | 2026-07-14 | docs(error): add recovery-strategy table and extension policy. |
+| `cfb02d5` | 2026-07-14 | docs(orchestrator): add Mermaid lifecycle diagram and strategy notes. |
+| `c0b6699` | 2026-07-14 | docs(persistence): add Safety section, platform notes, examples. |
+| `d5d7f4f` | 2026-07-14 | docs(search): expand module docs with concurrency model and examples. |
+| `d730c26` | 2026-07-14 | docs(search): add pseudocode and performance notes to sweep functions. |
+| `3ed077a` | 2026-07-14 | feat(search): promote MAX_BATCH to pub with documentation. |
+| `03f0090` | 2026-07-14 | docs(telemetry): expand module docs with global-state and lifecycle notes. |
+| `e24d4e4` | 2026-07-14 | docs(search,error): add Examples to constants and FindError. |
+| `ed7386f` | 2026-07-14 | docs(search,persistence): document OffsetVariant and Checkpoint invariants. |
+| `b725ed1` | 2026-07-14 | docs(config): add struct-level examples and invariants to SweepRange/Config. |
+| `4626076` | 2026-07-14 | docs(search,persistence): document CacheWriter contract and FileCacheWriter thread-safety. |
+| `0145bcb` | 2026-07-14 | docs(persistence): add Performance section to FileCacheWriter::write_block. |
+| `e17c94c` | 2026-07-14 | docs: fix 4 broken intra-doc links surfaced by `RUSTDOCFLAGS=-D warnings cargo doc`. |
+| `d45262c` | 2026-07-14 | docs(changelog): document the doc pass under Unreleased. |
+| `9813fb5` | 2026-07-14 | fix(tests): switch `rand::Rng` to `rand::RngExt` for `random_range` after rand 0.10 broke the integration test; restored `cargo clippy --all-targets -- -D warnings`. |
+| `4c45e2e` | 2026-07-14 | chore(repo): canonicalize all repository URLs to `sachncs/find` (was `sachn-cs/find` alias everywhere). 20 references across 14 files rewritten. |
+
 ## [Unreleased]
 
 ### Added
