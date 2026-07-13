@@ -29,7 +29,7 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
    ```
 3. **Add upstream remote**:
    ```bash
-   git remote add upstream https://github.com/sachn-cs/find.git
+   git remote add upstream https://github.com/sachncs/find.git
    ```
 4. **Setup git hooks** (recommended):
    ```bash
@@ -45,7 +45,7 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 ### Reporting Bugs
 
-- Check [existing issues](https://github.com/sachn-cs/find/issues) first
+- Check [existing issues](https://github.com/sachncs/find/issues) first
 - Use the **Bug Report** template
 - Include reproduction steps, expected vs actual behavior
 - Provide environment details (OS, Rust version, project version)

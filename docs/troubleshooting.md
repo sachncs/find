@@ -183,7 +183,7 @@ The exit code is set by `anyhow` based on the underlying `Result`. Any error fro
 
 If the above does not resolve your issue:
 
-1. Search [existing issues](https://github.com/sachn-cs/find/issues) on GitHub.
+1. Search [existing issues](https://github.com/sachncs/find/issues) on GitHub.
 2. Open a [bug report](../.github/ISSUE_TEMPLATE/bug_report.md) with the full error message, the command line, and the environment details.
 3. For security issues, follow the process in [SECURITY.md](../SECURITY.md) — do **not** open a public issue.
 

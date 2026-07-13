@@ -37,7 +37,7 @@ Yes. The tool supports Linux, macOS, and Windows. Some features like binary cach
 ### How do I build from source?
 
 ```bash
-git clone https://github.com/sachn-cs/find.git
+git clone https://github.com/sachncs/find.git
 cd find
 cargo build --release
 ```

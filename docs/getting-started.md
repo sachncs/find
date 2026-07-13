@@ -12,7 +12,7 @@ This document is a guided walkthrough of your first search with the `find` tool.
 ## Step 1: Clone and build
 
 ```bash
-git clone https://github.com/sachn-cs/find.git
+git clone https://github.com/sachncs/find.git
 cd find
 cargo build --release
 ```

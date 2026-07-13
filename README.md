@@ -1,11 +1,11 @@
 # Secp256k1 Find Tool
 
-[![CI](https://github.com/sachn-cs/find/actions/workflows/ci.yml/badge.svg)](https://github.com/sachn-cs/find/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/sachn-cs/find/branch/master/graph/badge.svg)](https://codecov.io/gh/sachn-cs/find)
+[![CI](https://github.com/sachncs/find/actions/workflows/ci.yml/badge.svg)](https://github.com/sachncs/find/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/sachncs/find/branch/master/graph/badge.svg)](https://codecov.io/gh/sachncs/find)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-blue.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-red.svg)](LICENSE-MIT)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![Stars](https://img.shields.io/github/stars/sachn-cs/find?style=social)](https://github.com/sachn-cs/find)
+[![Stars](https://img.shields.io/github/stars/sachncs/find?style=social)](https://github.com/sachncs/find)
 
 > **EDUCATIONAL AND RESEARCH USE ONLY.** This software is for pedagogical exploration of elliptic curve mathematics and high-performance Rust systems engineering. See [DISCLAIMER.md](DISCLAIMER.md).
 
@@ -27,7 +27,7 @@ A high-performance Rust system for secp256k1 private key discovery using a multi
 
 ```bash
 # Clone the repository
-git clone https://github.com/sachn-cs/find.git
+git clone https://github.com/sachncs/find.git
 cd find
 
 # Build in release mode

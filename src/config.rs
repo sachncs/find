@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Sachin (https://github.com/sachn-cs)
+// Copyright (c) 2026 Sachin (https://github.com/sachncs)
 // Released under MIT. See LICENSE-MIT.
 // THIS SOFTWARE IS FOR EDUCATIONAL AND RESEARCH PURPOSES ONLY.
 

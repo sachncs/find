@@ -168,7 +168,7 @@ sha256sum find-*.tar.gz find-*.zip > checksums.txt
 
 ### 4. Create the GitHub release
 
-1. Go to <https://github.com/sachn-cs/find/releases/new>.
+1. Go to <https://github.com/sachncs/find/releases/new>.
 2. Select the tag you created.
 3. Enter release title: `v1.1.0`.
 4. Paste release notes from [CHANGELOG.md](../../CHANGELOG.md).
@@ -179,7 +179,7 @@ sha256sum find-*.tar.gz find-*.zip > checksums.txt
 
 After a release is published:
 
-- [ ] Verify the release is visible on the [Releases page](https://github.com/sachn-cs/find/releases).
+- [ ] Verify the release is visible on the [Releases page](https://github.com/sachncs/find/releases).
 - [ ] Test the binaries on at least one platform.
 - [ ] Announce the release in any project-relevant channels.
 - [ ] Update any documentation that references the version number.

@@ -3,7 +3,7 @@ name: Feature Request
 about: Suggest an idea or enhancement
 title: "[FEATURE] "
 labels: enhancement
-assignees: sachn-cs
+assignees: sachncs
 ---
 
 ## Problem Statement
