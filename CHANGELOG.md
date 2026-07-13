@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Comprehensive Rustdoc documentation pass: Mermaid module-dependency graph in `lib.rs`,
+  Mermaid session-lifecycle diagram in `orchestrator.rs`, struct-level Examples for
+  `SweepRange`, `Config`, `OffsetVariant`, `Checkpoint`, and `FindError`; per-function
+  Examples for `is_identity`, `x_bytes`, `to_hex_x`, `Config::new`, `Config::validate`,
+  `SweepRange::new`, `Progress::new`/`add`/`get`, `VariantIndex::new`/`variants`,
+  `SearchMatch::new`/`candidates_as_scalars`, `generate_variants`, `perform_chunked_sweep`,
+  `init_tracing`, `install_rayon_panic_handler`, and the constants `BATCH_SIZE`,
+  `VARIANT_COUNT`. Module-level `# Thread safety`, `# Concurrency`, `# Side-channel stance`,
+  `# Recovery strategy`, `# Validation guarantees`, `# Coordinate representations`,
+  `# Platform behaviour`, `# Global state`, and `# Lifecycle` sections added across
+  all seven library modules. `# Safety` section on `Checkpoint::save_atomic` documents
+  the single `unsafe { libc::fsync }` block. Pseudocode blocks added to `generate_variants`,
+  `perform_chunked_sweep`, and `precompute_chunk`. The `CacheWriter` trait now has a
+  `# Contract` section covering atomic block writes, concurrency, and offset independence.
+- `find::search::MAX_BATCH` promoted from private to `pub` so downstream consumers and
+  benchmark authors can reason about the per-batch stack budget (~3 KB on x86_64).
+  Additive API surface change; existing callers unaffected.
+- 17 new doc-tests (29 total, 1 `ignore`d) covering the documented public surface.
+  All compile under `cargo test --doc`.
+
+### Fixed
+- `cargo doc --workspace --no-deps` now produces zero warnings (also with
+  `RUSTDOCFLAGS=-D warnings`). Four broken intra-doc links were resolved:
+  `search::precompute_chunk` → `crate::search::precompute_chunk`, bare `Mutex`
+  → `std::sync::Mutex`, and two `ThreadPoolBuilder::build_global` references
+  → `rayon::ThreadPoolBuilder::build_global`.
 - Comprehensive open source documentation (CODE_OF_CONDUCT.md, CONTRIBUTING guidelines)
 - GitHub issue templates for bug reports and feature requests
 - Dependabot configuration for automated dependency updates
