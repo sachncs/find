@@ -116,6 +116,13 @@ pub const VARIANT_COUNT: usize = 512;
 /// offset \(V\). During a sweep the engine compares \(x(j \cdot G)\) against
 /// the variant's `x_bytes`. A match implies the private key is one of
 /// \(V + j\) or \(V - j\) (mod \(n\)).
+///
+/// # Invariants
+///
+/// - `x_bytes` is **never all-zero** (variants whose subtraction yields
+///   the point-at-infinity are skipped during [`generate_variants`]).
+/// - `v_scalar` equals `Scalar::reduce(V)`; both representations are kept
+///   so that the engine does not need to redo the reduction at match time.
 #[derive(Debug, Clone)]
 pub struct OffsetVariant {
     /// Human-readable label such as `"2^64"` or `"sum(2^0..2^7)"`.

@@ -66,6 +66,33 @@ use tracing::instrument;
 ///
 /// See [ADR-0003](../docs/adr/0003-atomic-checkpointing.md) for the
 /// write-then-rename + parent-directory `fsync` design rationale.
+///
+/// # Invariants
+///
+/// - `last_x` is the 32-byte big-endian X-coordinate of `last_j · G`,
+///   lowercase hex with **no leading `0x` prefix**.
+/// - The checkpoint is **only meaningful for the same `pubkey` that was
+///   active when it was written**. A different `pubkey` is treated as
+///   "no checkpoint" by [`crate::orchestrator::run`].
+///
+/// # Examples
+///
+/// ```
+/// use find::persistence::Checkpoint;
+/// use find::ecc;
+/// use k256::Scalar;
+///
+/// let last_j: u64 = 42;
+/// let x = ecc::to_hex_x(&ecc::scalar_mul_g(&Scalar::from(last_j)));
+/// let cp = Checkpoint {
+///     last_j,
+///     pubkey: "02abcd".to_string(),
+///     last_x: x,
+/// };
+/// assert!(cp.verify("02abcd").is_ok());
+/// assert!(cp.verify("02ff").is_ok(), // different pubkey -> no-op verify
+///     "verify() treats mismatched pubkeys as a fresh start");
+/// ```
 #[derive(Serialize, Deserialize)]
 pub struct Checkpoint {
     /// The last successfully completed scalar index.
