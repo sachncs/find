@@ -9,6 +9,66 @@
 //! beyond delegating to [`persistence`].
 //!
 //! The [`Config`] type and the related constants live in [`crate::config`].
+//!
+//! # Session lifecycle
+//!
+//! ```mermaid
+//! flowchart TD
+//!     A[validate Config] --> B[parse pubkey]
+//!     B --> C[generate 512 variants]
+//!     C --> D[save points.json]
+//!     D --> E[build VariantIndex]
+//!     E --> F{checkpoint exists<br/>with same pubkey?}
+//!     F -- yes --> G[verify integrity anchor]
+//!     G -- ok --> H[resume at last_j]
+//!     G -- mismatch --> X[ResearchIntegrityError]
+//!     F -- no --> I[start fresh at j = 0]
+//!     H --> J[loop: per chunk of 1B scalars]
+//!     I --> J
+//!     J --> K{cache file<br/>exists?}
+//!     K -- yes --> L[perform_cached_sweep]
+//!     K -- no --> M{cache_points<br/>enabled?}
+//!     M -- yes --> N[precompute_chunk + cached_sweep]
+//!     M -- no --> O[perform_chunked_sweep]
+//!     L --> P{match<br/>found?}
+//!     N --> P
+//!     O --> P
+//!     P -- yes --> Q[return Some match]
+//!     P -- no --> R[advance current_j<br/>save atomic checkpoint]
+//!     R --> S{current_j ==<br/>MAX_SEARCH?}
+//!     S -- yes --> T[return None]
+//!     S -- no --> J
+//! ```
+//!
+//! # Strategy selection
+//!
+//! For each chunk of `DEFAULT_CACHE_CHUNK_SIZE` scalars the orchestrator
+//! picks one of three strategies, in this priority order:
+//!
+//! 1. **Cache hit** — replay the precomputed X-coordinates from disk via
+//!    [`persistence::perform_cached_sweep`].
+//! 2. **Cache miss with `cache_points`** — precompute the cache via
+//!    [`search::precompute_chunk`] (writing X-coords to disk and checking
+//!    the index live). If a match surfaces mid-precompute, the redundant
+//!    cached-sweep pass is skipped.
+//! 3. **Cache miss without caching** — pure CPU-bound parallel sweep via
+//!    [`search::perform_chunked_sweep`], discarding the work after the
+//!    segment.
+//!
+//! # Checkpoint durability
+//!
+//! Checkpoints are written atomically (write-then-rename + parent-dir
+//! `fsync` on Unix) by [`persistence::Checkpoint::save_atomic`]. The
+//! integrity anchor (X-coordinate of `last_j · G`) is recomputed at every
+//! segment boundary so that a future resume can detect corruption. See
+//! [ADR-0003](../docs/adr/0003-atomic-checkpointing.md).
+//!
+//! # Thread safety
+//!
+//! [`run`] is single-threaded at the top level. It does spawn its own
+//! Rayon worker pool internally via the search-engine entry points.
+//! Re-entrant calls are safe as long as each call uses a distinct
+//! output directory.
 
 use crate::config::{Config, DEFAULT_CACHE_CHUNK_SIZE, MAX_SEARCH, MIN_J, TRILLION};
 use crate::ecc;
@@ -51,6 +111,26 @@ pub use crate::config::SweepRange;
 /// fails anchor verification.
 ///
 /// Returns [`FindError::Io`] on checkpoint or cache I/O failures.
+///
+/// # Examples
+///
+/// ```no_run
+/// use find::config::Config;
+/// use find::orchestrator;
+///
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let cfg = Config::new(
+///         "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+///         "data",
+///         false,
+///     );
+///     match orchestrator::run(&cfg)? {
+///         Some(m) => println!("match: {:?}", m),
+///         None => println!("no match found in 64-bit space"),
+///     }
+///     Ok(())
+/// }
+/// ```
 pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
     config.validate()?;
 
