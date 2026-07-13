@@ -10,6 +10,15 @@
 //! Points are handled in projective coordinates during arithmetic and only
 //! normalized to affine when an X-coordinate must be extracted.
 //!
+//! # Coordinate representations
+//!
+//! Internally the search engine stores points in
+//! [`k256::ProjectivePoint`] form, which keeps arithmetic cheap (no modular
+//! inversion per operation). Conversion to [`k256::AffinePoint`] — which
+//! requires one modular inversion per point — is deferred to the
+//! [`to_hex_x`] / [`x_bytes`] extraction helpers, where it can be batched
+//! using Montgomery's simultaneous inversion (see ADR-0002).
+//!
 //! # Side-channel stance
 //!
 //! **This module is not constant-time.** Scalar multiplication, modular
@@ -18,6 +27,22 @@
 //! only; it MUST NOT be used to sign or verify messages where
 //! side-channel resistance is required. See [`docs/security.md`](../docs/security.md)
 //! for the full threat model.
+//!
+//! # Validation guarantees
+//!
+//! Every input parsed by this module is validated against the secp256k1
+//! curve equation before being returned. Specifically:
+//!
+//! - [`parse_pubkey`] rejects off-curve points, wrong SEC1 prefixes, and
+//!   the point-at-infinity.
+//! - [`hex_to_scalar`] rejects values equal to or greater than the curve
+//!   order `n` (SEC 2 §2.4.1).
+//!
+//! # Thread safety
+//!
+//! Every function in this module is pure and stateless. All `&ProjectivePoint`
+//! and `&Scalar` arguments may be freely shared across threads; the
+//! functions are unconditionally [`Send`] + [`Sync`].
 
 use crate::error::{FindError, Result};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
@@ -41,6 +66,12 @@ use tracing::instrument;
 /// Returns [`FindError::InvalidPublicKey`] if the decoded bytes do not form
 /// a valid SEC1 public key (wrong prefix, off-curve coordinates, or the
 /// point-at-infinity).
+///
+/// # Security
+///
+/// The parser is purely string-decoding + signature verification (zero
+/// knowledge of any private key). It does not perform any timing-sensitive
+/// operation and is safe to call on attacker-controlled input.
 ///
 /// # Examples
 ///
@@ -89,12 +120,24 @@ pub fn generator() -> ProjectivePoint {
 /// Returns [`FindError::EccError`] if the decoded value is greater than or
 /// equal to the curve order \(n\).
 ///
+/// # Complexity
+///
+/// \(O(1)\) — the function performs a single 32-byte canonical decode and
+/// one constant-time reduction check. Memory usage is bounded by a single
+/// 32-byte stack buffer.
+///
+/// # Security
+///
+/// Pure data manipulation; no secret-dependent branching. Safe to call on
+/// attacker-controlled input.
+///
 /// # Examples
 ///
 /// ```
 /// use find::ecc;
 ///
 /// let s = ecc::hex_to_scalar("01").unwrap();
+/// assert_eq!(s, k256::Scalar::from(1u64));
 /// ```
 pub fn hex_to_scalar(hex_str: &str) -> Result<Scalar> {
     let bytes = hex::decode(hex_str).map_err(FindError::from)?;
@@ -122,6 +165,12 @@ pub fn hex_to_scalar(hex_str: &str) -> Result<Scalar> {
 ///
 /// This is the primary operation used during the search sweep to generate
 /// candidate points.
+///
+/// # Security
+///
+/// Not constant-time; the underlying k256 fixed-base multiplication leaks
+/// timing information about `d`. Do not use this function in any context
+/// where the scalar is secret.
 #[inline(always)]
 pub fn scalar_mul_g(d: &Scalar) -> ProjectivePoint {
     ProjectivePoint::GENERATOR * d
@@ -131,6 +180,11 @@ pub fn scalar_mul_g(d: &Scalar) -> ProjectivePoint {
 ///
 /// Subtraction is performed as \(P + (-Q)\), where \(-Q\) is the additive
 /// inverse.
+///
+/// # Security
+///
+/// Not constant-time; the negation and mixed addition are both exposed
+/// to timing side-channels.
 #[inline(always)]
 pub fn subtract(p: &ProjectivePoint, q: &ProjectivePoint) -> ProjectivePoint {
     p - q
@@ -147,6 +201,34 @@ pub fn subtract(p: &ProjectivePoint, q: &ProjectivePoint) -> ProjectivePoint {
 /// Returns a 64-character lower-case hex string representing the 32-byte
 /// X-coordinate. If the input is the point-at-infinity, returns a string of
 /// 64 zeros.
+///
+/// # Performance
+///
+/// This function performs a single projective-to-affine conversion (one
+/// modular inversion) plus a base-16 encoding of the resulting 32-byte
+/// coordinate. The hot-path callers in [`crate::search`] amortize the
+/// inversion across 32 points at a time using Montgomery's simultaneous
+/// inversion (see ADR-0002).
+///
+/// # Security
+///
+/// Not constant-time; the modular inversion leaks timing information. See
+/// the module-level docs for the threat model.
+///
+/// # Examples
+///
+/// ```
+/// use find::ecc;
+/// use k256::Scalar;
+///
+/// let p = ecc::scalar_mul_g(&Scalar::from(42u64));
+/// let hex_x = ecc::to_hex_x(&p);
+/// assert_eq!(hex_x.len(), 64);
+///
+/// // The identity point canonicalises to 64 zeros.
+/// let id = k256::ProjectivePoint::IDENTITY;
+/// assert_eq!(ecc::to_hex_x(&id), "0".repeat(64));
+/// ```
 pub fn to_hex_x(p: &ProjectivePoint) -> String {
     let affine = p.to_affine();
     // Uncompressed SEC1 (65 bytes: 0x04 || X || Y) — we discard the Y.
@@ -176,6 +258,16 @@ pub fn to_hex_x(p: &ProjectivePoint) -> String {
 /// it short-circuits on the first differing coordinate. The wrapper as a
 /// whole is not constant-time; see the module-level doc for the threat
 /// model.
+///
+/// # Examples
+///
+/// ```
+/// use find::ecc;
+/// use k256::ProjectivePoint;
+///
+/// assert!(ecc::is_identity(&ProjectivePoint::IDENTITY));
+/// assert!(!ecc::is_identity(&ecc::generator()));
+/// ```
 #[inline(always)]
 pub fn is_identity(p: &ProjectivePoint) -> bool {
     *p == ProjectivePoint::IDENTITY
@@ -192,6 +284,20 @@ pub fn is_identity(p: &ProjectivePoint) -> bool {
 ///
 /// `Some([u8; 32])` containing the X-coordinate, or `None` if the point is
 /// the point-at-infinity (in which case the X-coordinate is undefined).
+///
+/// # Examples
+///
+/// ```
+/// use find::ecc;
+/// use k256::Scalar;
+///
+/// let p = ecc::scalar_mul_g(&Scalar::from(7u64));
+/// let xs = ecc::x_bytes(&p).expect("non-identity has an X-coordinate");
+/// assert_eq!(xs.len(), 32);
+///
+/// let id = k256::ProjectivePoint::IDENTITY;
+/// assert!(ecc::x_bytes(&id).is_none());
+/// ```
 #[inline]
 pub fn x_bytes(p: &ProjectivePoint) -> Option<[u8; 32]> {
     if is_identity(p) {
