@@ -7,6 +7,29 @@
 //! This module owns the [`Config`] struct, the [`SweepRange`] newtype, and the
 //! default constants used to drive a search session. It is intentionally
 //! minimal: it contains no I/O, no arithmetic, and no platform-specific code.
+//!
+//! # Thread safety
+//!
+//! Every type in this module is [`Send`] + [`Sync`] and `Clone` (where the
+//! fields are cloneable). [`Config`] in particular is cheaply cloneable and
+//! safe to pass by reference into a long-running session, including across
+//! thread boundaries.
+//!
+//! # Relationships
+//!
+//! [`Config`] is the input to [`crate::orchestrator::run`]; the orchestrator
+//! clones the [`Config`]'s `pubkey` string into the checkpoint it persists
+//! and uses the `output_dir` to locate checkpoints and binary caches.
+//! [`SweepRange`] is currently re-exported from
+//! [`crate::orchestrator`] for backward compatibility but is otherwise not
+//! consumed by the orchestrator's loop (the loop iterates a fixed-size
+//! chunk at a time).
+//!
+//! # Constants
+//!
+//! The compile-time constants ([`TRILLION`], [`DEFAULT_CACHE_CHUNK_SIZE`],
+//! [`MAX_SEARCH`], [`MIN_J`]) define the boundaries of the search space
+//! and the granularity of audit logging. They are documented inline.
 
 use crate::error::{FindError, Result};
 
@@ -52,6 +75,20 @@ impl SweepRange {
     /// * `start` — First scalar (inclusive). Values below `MIN_J` are
     ///   clamped to `MIN_J` because `j = 0` yields the identity point.
     /// * `end` — Last scalar (inclusive).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::config::SweepRange;
+    ///
+    /// let r = SweepRange::new(1, 100);
+    /// assert_eq!(r.len(), 100);
+    /// assert!(!r.is_empty());
+    ///
+    /// // `start` is clamped to MIN_J = 1.
+    /// let clamped = SweepRange::new(0, 10);
+    /// assert_eq!(clamped.start, 1);
+    /// ```
     pub fn new(start: u64, end: u64) -> Self {
         Self {
             start: start.max(MIN_J),
@@ -93,6 +130,28 @@ pub struct Config {
 
 impl Config {
     /// Constructs a new `Config` with the given pubkey, output dir, and cache flag.
+    ///
+    /// # Arguments
+    ///
+    /// * `pubkey` — A hex-encoded SEC1 public key (compressed or uncompressed).
+    /// * `output_dir` — Filesystem path for checkpoints, binary caches, and
+    ///   the exported `points.json` audit file. Created if it does not exist.
+    /// * `cache_points` — If `true`, the orchestrator will pre-compute and
+    ///   persist binary caches for each chunk (~32 GB per billion scalars).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::config::Config;
+    ///
+    /// let cfg = Config::new(
+    ///     "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+    ///     "data",
+    ///     false,
+    /// );
+    /// assert_eq!(cfg.pubkey.len(), 66);
+    /// assert!(!cfg.cache_points);
+    /// ```
     pub fn new(
         pubkey: impl Into<String>,
         output_dir: impl Into<String>,
@@ -111,6 +170,18 @@ impl Config {
     ///
     /// Returns [`FindError::InvalidPublicKey`] if the pubkey string is empty
     /// or whitespace-only.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::config::Config;
+    ///
+    /// let ok = Config::new("0279be...", "data", false);
+    /// assert!(ok.validate().is_ok());
+    ///
+    /// let bad = Config::new("   ", "data", false);
+    /// assert!(bad.validate().is_err());
+    /// ```
     pub fn validate(&self) -> Result<()> {
         if self.pubkey.trim().is_empty() {
             return Err(FindError::InvalidPublicKey(
