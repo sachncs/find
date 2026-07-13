@@ -6,6 +6,29 @@
 //!
 //! All domain logic lives in [`find::orchestrator`]; this file only parses
 //! arguments, initializes observability, and renders results.
+//!
+//! # Lifecycle
+//!
+//! The binary performs five steps in order:
+//!
+//! 1. Parse CLI flags with [`clap`].
+//! 2. Install the Rayon panic handler so worker panics are logged rather
+//!    than aborting the process.
+//! 3. Initialise tracing (daily-rolling file appender + stderr layer).
+//! 4. Construct a [`find::config::Config`] and delegate to
+//!    [`find::orchestrator::run`].
+//! 5. Render the [`find::search::SearchMatch`] to stdout, or print a
+//!    "no match" message if the entire scalar space was exhausted.
+//!
+//! # Errors
+//!
+//! Errors from the orchestrator propagate as [`anyhow::Error`] and produce a
+//! non-zero exit status. Argument parse errors are emitted by `clap`.
+//!
+//! # Threading
+//!
+//! The binary is single-threaded at the top level; the orchestrator manages
+//! its own Rayon worker pool internally.
 
 use clap::Parser;
 use find::config::Config;
@@ -15,6 +38,24 @@ use std::time::Instant;
 use tracing::{info, info_span};
 
 /// Command-line interface for the secp256k1 find tool.
+///
+/// This struct is private to the binary; the library exposes
+/// [`find::config::Config`] for programmatic users.
+///
+/// # Examples
+///
+/// ```ignore
+/// use clap::Parser;
+///
+/// #[derive(Parser)]
+/// struct Args {
+///     #[arg(short, long)]
+///     pubkey: String,
+/// }
+///
+/// let args = Args::parse_from(["find", "--pubkey", "0279be..."]);
+/// assert_eq!(args.pubkey, "0279be...");
+/// ```
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -60,6 +101,13 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// Prints a formatted success report to stdout.
+///
+/// The output is a fixed-width ASCII banner containing the matched variant
+/// label, the shift scalar `V`, the discovered search scalar `j`, the two
+/// candidate private keys `V ± j (mod n)`, and the wall-clock duration.
+///
+/// This function performs no I/O beyond stdout and does not panic under
+/// normal [`find::search::SearchMatch`] input.
 fn render_success_report(m: find::search::SearchMatch, total_time: std::time::Duration) {
     println!("\n{}", "=".repeat(60));
     println!("MATCH DISCOVERED (Variant: {})", m.label);
