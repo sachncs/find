@@ -8,6 +8,20 @@
 //! platform-specific code. All side effects are injected via explicit
 //! arguments (writers, progress counters).
 //!
+//! # Concurrency model
+//!
+//! - [`Progress`] is a lock-free counter backed by [`AtomicU64`] with
+//!   [`Ordering::Relaxed`]; it is safe to call from any number of Rayon
+//!   worker threads concurrently.
+//! - [`VariantIndex`] is built once and then read-only; it is [`Sync`].
+//! - [`precompute_chunk`] uses a [`Mutex<Option<SearchMatch>>`] as a
+//!   best-effort broadcast channel: any worker that finds a match writes
+//!   it; remaining workers observe it via a non-blocking lock check and
+//!   short-circuit. Poisoning is tolerated via `into_inner()` so that a
+//!   worker panic does not corrupt the result.
+//! - [`perform_chunked_sweep`] uses Rayon's `find_map_any` for early exit
+//!   when the first match is found; later batches are not scheduled.
+//!
 //! # Side-channel stance
 //!
 //! Variant generation, the `+ G` increment chain, and batch normalization
@@ -15,6 +29,35 @@
 //! are appropriate for the research and educational scope of this tool,
 //! not for production signing. See [`docs/security.md`](../docs/security.md)
 //! for the threat model.
+//!
+//! # Memory layout
+//!
+//! All hot-path arrays are stack-allocated with a fixed maximum batch size
+//! ([`MAX_BATCH`], equal to [`BATCH_SIZE`]). This bounds per-batch stack
+//! usage at ~3 KB on x86_64 (32 × 96 bytes for [`ProjectivePoint`] + a
+//! small [`AffinePoint`] buffer + a 32 × 32 byte X-coordinate scratch
+//! buffer), keeping the working set inside L1 cache.
+//!
+//! # Algorithm overview
+//!
+//! The engine searches for a private key `d` such that `d·G = P` by:
+//!
+//! 1. **Variant generation** ([`generate_variants`]): compute 512 candidate
+//!    points `P - V·G` for offsets `V` chosen from the powers of two
+//!    `2^0..2^255` and the cumulative sums `1, 3, 7, …, 2^256 - 1`. The
+//!    resulting X-coordinates are stored in [`OffsetVariant`].
+//! 2. **Index construction** ([`VariantIndex::new`]): sort the variants by
+//!    X-coordinate so that lookups during the sweep are `O(log N)`.
+//! 3. **Sweep** ([`perform_chunked_sweep`] / [`precompute_chunk`]): for
+//!    each scalar `j` in the chunk, compute `j·G`, extract its
+//!    X-coordinate, and probe the index. A match implies `d = V ± j`.
+//!
+//! See [`docs/algorithms.md`](../docs/algorithms.md) and
+//! [ADR-0001](../docs/adr/0001-multi-variant-search.md) for the full
+//! mathematical treatment.
+//!
+//! [`AtomicU64`]: std::sync::atomic::AtomicU64
+//! [`Ordering::Relaxed`]: std::sync::atomic::Ordering::Relaxed
 
 use crate::ecc;
 use crate::error::{FindError, Result};
@@ -85,6 +128,24 @@ impl VariantIndex {
     ///
     /// The input order is irrelevant; the index reorders variants internally
     /// by X-coordinate.
+    ///
+    /// # Complexity
+    ///
+    /// \(O(N \log N)\) where \(N\) is the number of variants, dominated by
+    /// the sort. Memory is \(O(N)\).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::ecc;
+    /// use find::search::{generate_variants, VariantIndex};
+    /// use k256::Scalar;
+    ///
+    /// let target = ecc::scalar_mul_g(&Scalar::from(123u64));
+    /// let variants = generate_variants(&target);
+    /// let index = VariantIndex::new(variants);
+    /// assert_eq!(index.variants().len(), 512);
+    /// ```
     pub fn new(variants: Vec<OffsetVariant>) -> Self {
         let mut entries = Vec::with_capacity(variants.len());
         for (i, var) in variants.iter().enumerate() {
@@ -138,6 +199,22 @@ impl VariantIndex {
     }
 
     /// Returns a slice of the backing variants.
+    ///
+    /// The slice is in the original (insertion) order, **not** the sorted
+    /// order used internally for binary search.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::ecc;
+    /// use find::search::{generate_variants, VariantIndex};
+    /// use k256::Scalar;
+    ///
+    /// let target = ecc::scalar_mul_g(&Scalar::from(7u64));
+    /// let index = VariantIndex::new(generate_variants(&target));
+    /// let first_label = &index.variants()[0].label;
+    /// assert!(first_label == "2^0" || first_label.starts_with("sum"));
+    /// ```
     pub fn variants(&self) -> &[OffsetVariant] {
         &self.variants
     }
@@ -163,6 +240,21 @@ impl SearchMatch {
     /// This constructor is provided because `SearchMatch` is
     /// `#[non_exhaustive]`, so external callers must use this function
     /// rather than struct expression syntax.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::search::SearchMatch;
+    ///
+    /// let m = SearchMatch::new(
+    ///     "2^0",
+    ///     "1",
+    ///     2,
+    ///     vec!["3".to_string(), "fffffffffffffffffffffffffffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140".to_string()],
+    /// );
+    /// assert_eq!(m.small_scalar, 2);
+    /// assert_eq!(m.label, "2^0");
+    /// ```
     pub fn new(
         label: impl Into<String>,
         offset: impl Into<String>,
@@ -184,6 +276,23 @@ impl SearchMatch {
     ///
     /// Returns [`FindError::EccError`] if any candidate is not a valid
     /// secp256k1 scalar (e.g., the value exceeds the curve order `n`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::search::SearchMatch;
+    /// use k256::Scalar;
+    ///
+    /// // d = 3, V = 1, j = 2 -> V + j = 3, V - j = -1 mod n.
+    /// let m = SearchMatch::new(
+    ///     "2^0",
+    ///     "1",
+    ///     2,
+    ///     vec!["03".to_string()],
+    /// );
+    /// let scalars = m.candidates_as_scalars().unwrap();
+    /// assert_eq!(scalars[0], Scalar::from(3u64));
+    /// ```
     pub fn candidates_as_scalars(&self) -> Result<Vec<Scalar>> {
         self.candidates
             .iter()
@@ -221,6 +330,17 @@ impl Default for Progress {
 
 impl Progress {
     /// Creates a new counter starting at zero.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::search::Progress;
+    ///
+    /// let p = Progress::new();
+    /// assert_eq!(p.get(), 0);
+    /// p.add(5);
+    /// assert_eq!(p.get(), 5);
+    /// ```
     pub fn new() -> Self {
         Self {
             counter: AtomicU64::new(0),
@@ -228,11 +348,42 @@ impl Progress {
     }
 
     /// Atomically adds `n` to the counter and returns the **previous** value.
+    ///
+    /// This matches the [`AtomicU64::fetch_add`] contract; the return
+    /// value is useful in tests that want to verify the exact sequencing
+    /// of concurrent updates.
+    ///
+    /// # Concurrency
+    ///
+    /// Uses [`Ordering::Relaxed`] because the counter is purely
+    /// informational and does not synchronise any other state. Callers
+    /// that need a happens-before relationship should layer their own
+    /// synchronisation on top.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::search::Progress;
+    ///
+    /// let p = Progress::new();
+    /// assert_eq!(p.add(10), 0); // returns previous value
+    /// assert_eq!(p.add(5), 10);
+    /// assert_eq!(p.get(), 15);
+    /// ```
     pub fn add(&self, n: u64) -> u64 {
         self.counter.fetch_add(n, Ordering::Relaxed)
     }
 
     /// Reads the current counter value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::search::Progress;
+    ///
+    /// let p = Progress::new();
+    /// assert_eq!(p.get(), 0);
+    /// ```
     pub fn get(&self) -> u64 {
         self.counter.load(Ordering::Relaxed)
     }
@@ -267,6 +418,48 @@ pub trait CacheWriter: Send + Sync {
 ///
 /// This function performs 512 scalar multiplications and normalizations;
 /// it is intended to be called once at the start of a session.
+///
+/// # Pseudocode
+///
+/// ```text
+/// variants = []
+/// # Powers-of-two pass: V = 2^i for i in 0..256
+/// pow = U256::ONE
+/// for i in 0..256:
+///     scalar = Scalar::reduce(pow)            # pow < 2^256 < n, so reduce is a no-op
+///     shifted = P - scalar * G
+///     if shifted != identity:
+///         variants.append(OffsetVariant { V = pow, x = X(shifted) })
+///     pow <<= 1
+/// # Cumulative-sum pass: V = 2^(i+1) - 1 for i in 0..256
+/// cum = U256::ONE
+/// for i in 0..256:
+///     scalar = Scalar::reduce(cum)
+///     shifted = P - scalar * G
+///     if shifted != identity:
+///         variants.append(OffsetVariant { V = cum, x = X(shifted) })
+///     cum = (cum << 1) | U256::ONE             # generates 1, 3, 7, 15, ...
+/// return variants
+/// ```
+///
+/// # Complexity
+///
+/// \(O(512)\) scalar multiplications plus \(O(512)\) projective→affine
+/// conversions. Wall-clock cost is dominated by the multiplications; the
+/// conversions are amortized by the orchestrator's batching policy.
+///
+/// # Examples
+///
+/// ```
+/// use find::ecc;
+/// use find::search::generate_variants;
+/// use k256::Scalar;
+///
+/// let target = ecc::scalar_mul_g(&Scalar::from(42u64));
+/// let variants = generate_variants(&target);
+/// assert!(!variants.is_empty());
+/// assert!(variants.iter().all(|v| !v.label.is_empty()));
+/// ```
 #[instrument(skip(target_p), level = "info")]
 pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
     let mut variants = Vec::with_capacity(512);
