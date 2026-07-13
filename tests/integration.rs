@@ -31,7 +31,7 @@ const CURVE_ORDER_HEX: &str = "fffffffffffffffffffffffffffffffebaaedce6af48a03bb
 /// sweep is narrowed to the exact value of \(j\).
 #[test]
 fn test_mandatory_random_6_to_8_digits() {
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
     let mut rng = ChaCha8Rng::seed_from_u64(42);
