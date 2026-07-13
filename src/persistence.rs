@@ -7,6 +7,45 @@
 //! All I/O side effects are isolated here so that `search` remains a pure
 //! domain module. Consumers should use [`Checkpoint`] for durable progress
 //! and [`FileCacheWriter`] for binary cache generation.
+//!
+//! # Responsibilities
+//!
+//! - **Atomic checkpoints** ([`Checkpoint`]): JSON-encoded progress records
+//!   written via write-then-rename, with an integrity anchor (X-coordinate
+//!   of `last_j · G`) that allows [`Checkpoint::verify`] to detect
+//!   corruption. See [ADR-0003](../docs/adr/0003-atomic-checkpointing.md).
+//! - **Binary caches** ([`FileCacheWriter`]): 32-byte X-coordinate blocks
+//!   appended to per-chunk files. See
+//!   [ADR-0006](../docs/adr/0006-binary-cache-format.md).
+//! - **JSON exports** ([`save_variants_to_json`]): a deterministic
+//!   `points.json` audit file mapping X-coordinate → offset decimal.
+//!
+//! # Concurrency
+//!
+//! - [`FileCacheWriter`] guards its inner [`File`] with a
+//!   [`std::sync::Mutex`]. The mutex is uncontended in the typical case
+//!   because each write is a single batch of ~1 KiB. Mutex poisoning
+//!   surfaces as a panic from the holding thread; we deliberately abort
+//!   rather than try to recover the file handle's state (see
+//!   [ADR-0008](../docs/adr/0008-mutex-poisoning-policy.md)).
+//! - [`perform_cached_sweep`] takes a `&File` and is single-threaded; the
+//!   `BufReader` is local to the function.
+//!
+//! # Platform behaviour
+//!
+//! On Unix, [`FileCacheWriter::write_block`] uses `pwrite_at` (positional
+//! write), allowing arbitrary offsets without seeking. On other platforms
+//! it falls back to a mutex-protected `seek + write_all` pair. The fallback
+//! still satisfies [`CacheWriter`]'s contract.
+//!
+//! # Unsafe
+//!
+//! The only `unsafe` block in this module lives inside
+//! [`Checkpoint::save_atomic`]: a best-effort `libc::fsync` on the parent
+//! directory's file descriptor. Its `Result` is discarded because the
+//! rename is already atomic and `fsync` failure on the parent dir does
+//! not compromise that guarantee. See the `# Safety` section on
+//! `save_atomic` for details.
 
 use crate::ecc;
 use crate::error::{FindError, Result};
@@ -90,10 +129,37 @@ impl Checkpoint {
     /// 1. Writes JSON to a temporary file next to `path`.
     /// 2. Calls `sync_all` to flush data to the storage device.
     /// 3. Renames the temporary file to `path`.
+    /// 4. On Unix, best-effort `fsync` of the parent directory so that the
+    ///    rename is durable across crashes (POSIX guarantees a durable rename
+    ///    only after the parent's directory entries are flushed).
     ///
     /// # Errors
     ///
     /// Returns [`FindError::Io`] or [`FindError::SerializationError`] on failure.
+    ///
+    /// # Safety
+    ///
+    /// On Unix, this function invokes `libc::fsync` on the parent directory's
+    /// file descriptor. The call is **best-effort**: its `Result` is
+    /// discarded via `let _ =`, so a failed `fsync` does not propagate as an
+    /// error. The safety surface is therefore limited to ensuring that the
+    /// file descriptor is valid for the duration of the call — which is
+    /// guaranteed by the `File` returned from `std::fs::File::open(parent)`
+    /// being kept alive in the same scope.
+    ///
+    /// The single `unsafe { libc::fsync(...) }` block is annotated with an
+    /// inline `// SAFETY:` comment that explains the invariant. Because the
+    /// return value is discarded, an `fsync` failure cannot cause undefined
+    /// behavior; it merely leaves the rename slightly less durable than ideal,
+    /// which is acceptable for a research tool that already tolerates I/O
+    /// errors at higher layers.
+    ///
+    /// # Performance
+    ///
+    /// The `sync_all` on the data file plus the (best-effort) `fsync` on the
+    /// parent directory collectively cost one or two disk flushes. For a
+    /// research tool checkpointing at the per-chunk granularity (~1 billion
+    /// scalars), this is negligible compared to the search work itself.
     pub fn save_atomic(&self, path: &Path) -> Result<()> {
         let tmp_path = path.with_extension("json.tmp");
         {
@@ -154,6 +220,20 @@ impl FileCacheWriter {
     ///
     /// Returns [`FindError::Io`] if the file or its parent directories cannot
     /// be created.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use find::persistence::FileCacheWriter;
+    /// use std::path::Path;
+    ///
+    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let writer = FileCacheWriter::create(Path::new("data/chunk_1.bin"))?;
+    ///     let block = [0u8; 32 * 32]; // one batch of 32 X-coordinates
+    ///     find::search::CacheWriter::write_block(&writer, 0, &block)?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn create(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(FindError::Io)?;
@@ -174,6 +254,14 @@ impl FileCacheWriter {
     ///
     /// Returns [`FindError::Io`] if the file descriptor does not support
     /// truncation.
+    ///
+    /// # Performance
+    ///
+    /// On Linux, pre-allocation via `set_len` issues an `ftruncate` which
+    /// reserves contiguous disk blocks and reduces fragmentation on
+    /// append-heavy workloads. On filesystems that support extents
+    /// (ext4, xfs, btrfs), this is a near-free operation once the file is
+    /// created.
     pub fn preallocate(&self, len: u64) -> Result<()> {
         // The cache file is append-only and contention is rare; a poisoned
         // mutex implies another writer thread panicked mid-write, which we
@@ -280,6 +368,31 @@ pub fn perform_cached_sweep(
 /// # Returns
 ///
 /// The absolute path of the written file.
+///
+/// # Performance
+///
+/// Output is sorted by X-coordinate (via [`std::collections::BTreeMap`])
+/// so that the file is byte-stable across runs for the same public key.
+/// This makes the file diff-friendly and useful for reproducibility checks.
+/// Sorting adds an \(O(N \log N)\) cost where \(N\) is the variant count
+/// (typically 512).
+///
+/// # Examples
+///
+/// ```no_run
+/// use find::ecc;
+/// use find::persistence::save_variants_to_json;
+/// use find::search;
+/// use k256::Scalar;
+///
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let target = ecc::scalar_mul_g(&Scalar::from(123u64));
+///     let variants = search::generate_variants(&target);
+///     let path = save_variants_to_json(&variants, "data")?;
+///     println!("wrote {}", path);
+///     Ok(())
+/// }
+/// ```
 #[instrument(skip(variants, dir_path), level = "info")]
 pub fn save_variants_to_json(variants: &[OffsetVariant], dir_path: &str) -> Result<String> {
     // BTreeMap (not HashMap) is used so that the on-disk JSON output is
