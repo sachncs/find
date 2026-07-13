@@ -8,6 +8,34 @@
 //! [`FindError`] as its error type. This guarantees that callers can
 //! programmatically distinguish between transient failures (e.g. I/O) and
 //! fatal cryptographic mismatches.
+//!
+//! # Recovery strategy
+//!
+//! The variant chosen by an error carries a recommendation about whether
+//! the caller can retry, must abort, or must surface the failure to a
+//! human:
+//!
+//! | Variant | Recoverable? | Recommended action |
+//! |---|---|---|
+//! | [`FindError::EccError`] | Sometimes | Re-check input; usually a programmer error |
+//! | [`FindError::ResearchIntegrityError`] | No | Treat as data corruption; abort the session |
+//! | [`FindError::InvalidPublicKey`] | No | Reject input; do not retry |
+//! | [`FindError::Io`] | Yes | Retry with backoff; escalate after N attempts |
+//! | [`FindError::HexError`] | No | Reject input; do not retry |
+//! | [`FindError::SerializationError`] | No | Treat as data corruption; abort the session |
+//! | [`FindError::CacheCorrupted`] | No | Delete cache and regenerate; do not retry the file |
+//!
+//! # Thread safety
+//!
+//! [`FindError`] implements both [`Clone`] (manual) and [`PartialEq`] (manual,
+//! via discriminant + `Display`), and is therefore safe to send across
+//! threads and to compare in tests.
+//!
+//! # Extension policy
+//!
+//! The enum is `#[non_exhaustive]`. External match expressions must
+//! include a wildcard arm so that future variants do not break their build.
+//! See [ADR-0004](../docs/adr/0004-error-hierarchy.md) for the rationale.
 
 use thiserror::Error;
 
