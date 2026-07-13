@@ -243,7 +243,7 @@ impl Checkpoint {
 /// [`std::sync::Mutex`] that serialises writes. Concurrent [`CacheWriter`]
 /// implementations may be created by sharing a `FileCacheWriter` via
 /// `Arc<FileCacheWriter>` or by passing it directly to
-/// [`search::precompute_chunk`].
+/// [`crate::search::precompute_chunk`].
 pub struct FileCacheWriter {
     file: std::sync::Mutex<File>,
 }
@@ -315,7 +315,8 @@ impl CacheWriter for FileCacheWriter {
     /// On Unix this is a single `pwrite_at` call — no syscall for seeking,
     /// no per-thread state to coordinate. The underlying kernel call
     /// serialises against other writers via the file's `struct file`
-    /// lock; userspace contention is limited to the [`Mutex`] acquisition.
+    /// lock; userspace contention is limited to the [`std::sync::Mutex`]
+    /// acquisition.
     ///
     /// On other platforms, the implementation falls back to
     /// `seek + write_all`, which is two syscalls per block. The

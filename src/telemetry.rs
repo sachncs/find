@@ -28,8 +28,8 @@
 //! - [`init_tracing`] is idempotent only in the sense that a second call
 //!   will panic (see Global state above).
 //! - [`install_rayon_panic_handler`] uses Rayon's
-//!   [`ThreadPoolBuilder::build_global`], which is itself idempotent — a
-//!   second call is a no-op.
+//!   [`rayon::ThreadPoolBuilder::build_global`], which is itself
+//!   idempotent — a second call is a no-op.
 //!
 //! # Lifecycle
 //!
@@ -109,9 +109,9 @@ pub fn init_tracing<P: AsRef<Path>>(
 ///
 /// # Idempotency
 ///
-/// The function uses Rayon's [`ThreadPoolBuilder::build_global`], which
-/// is itself idempotent — a second call is a no-op. This makes it safe
-/// to call from both the production binary and any test harness.
+/// The function uses Rayon's [`rayon::ThreadPoolBuilder::build_global`],
+/// which is itself idempotent — a second call is a no-op. This makes it
+/// safe to call from both the production binary and any test harness.
 ///
 /// # Examples
 ///
