@@ -59,6 +59,23 @@ pub const MIN_J: u64 = 1;
 /// This is a thin newtype that documents intent and provides validation.
 /// It is distinct from `(start, end)` tuples so that callers cannot
 /// accidentally swap the bounds.
+///
+/// # Invariants
+///
+/// - `start >= MIN_J` (enforced by [`SweepRange::new`], which clamps).
+/// - The range is **inclusive on both ends**.
+///
+/// # Examples
+///
+/// ```
+/// use find::config::SweepRange;
+///
+/// let r = SweepRange::new(10, 20);
+/// assert_eq!(r.start, 10);
+/// assert_eq!(r.end, 20);
+/// assert_eq!(r.len(), 11); // inclusive on both ends
+/// assert!(!r.is_empty());
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SweepRange {
     /// First scalar (inclusive). Must be ≥ `MIN_J`.
@@ -115,6 +132,19 @@ impl SweepRange {
 ///
 /// All fields are owned strings so that the configuration can outlive the
 /// CLI argument parser.
+///
+/// # Examples
+///
+/// ```
+/// use find::config::Config;
+///
+/// let cfg = Config::new(
+///     "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+///     "data",
+///     false,
+/// );
+/// cfg.validate().expect("non-empty pubkey must validate");
+/// ```
 #[derive(Debug, Clone)]
 pub struct Config {
     /// HEX-encoded SEC1 public key (compressed or uncompressed).
