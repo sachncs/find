@@ -81,6 +81,13 @@ use tracing::instrument;
 ///
 /// See [ADR-0002](../docs/adr/0002-batch-normalization.md) for the full
 /// rationale.
+///
+/// # Examples
+///
+/// ```
+/// use find::search::BATCH_SIZE;
+/// assert_eq!(BATCH_SIZE, 32);
+/// ```
 pub const BATCH_SIZE: u64 = 32;
 
 /// The number of variants produced by [`generate_variants`].
@@ -89,6 +96,18 @@ pub const BATCH_SIZE: u64 = 32;
 /// cumulative sums (`Σ 2^0..2^i` for `i ∈ [0, 255]`). One collision
 /// (`2^0 == sum(2^0..2^0)`) is preserved for completeness; the index
 /// does not deduplicate.
+///
+/// # Examples
+///
+/// ```
+/// use find::search::{generate_variants, VARIANT_COUNT};
+/// use find::ecc;
+/// use k256::Scalar;
+///
+/// let target = ecc::scalar_mul_g(&Scalar::from(123u64));
+/// let variants = generate_variants(&target);
+/// assert_eq!(variants.len(), VARIANT_COUNT);
+/// ```
 pub const VARIANT_COUNT: usize = 512;
 
 /// A single search variant derived from the target public key.

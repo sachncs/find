@@ -46,6 +46,28 @@ use thiserror::Error;
 ///
 /// This enum is `#[non_exhaustive]` to allow future variants to be added
 /// without breaking semver. External callers should match on a wildcard arm.
+///
+/// # Examples
+///
+/// ```
+/// use find::error::FindError;
+///
+/// fn classify(e: &FindError) -> &'static str {
+///     match e {
+///         FindError::EccError(_) => "cryptographic",
+///         FindError::ResearchIntegrityError(_) => "data-corruption",
+///         FindError::InvalidPublicKey(_) => "input-rejected",
+///         FindError::Io(_) => "transient",
+///         FindError::HexError(_) => "input-rejected",
+///         FindError::SerializationError(_) => "data-corruption",
+///         FindError::CacheCorrupted(_) => "data-corruption",
+///         _ => "unknown",  // required because of #[non_exhaustive]
+///     }
+/// }
+///
+/// let e = FindError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x"));
+/// assert_eq!(classify(&e), "transient");
+/// ```
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum FindError {
