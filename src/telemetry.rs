@@ -7,6 +7,39 @@
 //! This module owns the [`init_tracing`] function and the
 //! [`install_rayon_panic_handler`] function. They are isolated here so that
 //! the same observability setup can be used by tests and external consumers.
+//!
+//! # Global state
+//!
+//! [`init_tracing`] consumes the **process-global tracing subscriber** via
+//! `tracing_subscriber::registry().init()`. Once installed, it cannot be
+//! replaced; a second call from the same process will panic. In test code
+//! prefer [`tracing::subscriber::with_default`] (which sets a thread-local
+//! subscriber) so that multiple tests can coexist.
+//!
+//! The returned [`tracing_appender::non_blocking::WorkerGuard`] **must**
+//! be held for the lifetime of the program. Dropping the guard flushes
+//! buffered log events to the rolling file, but a process that exits
+//! without holding the guard may lose the trailing tail of its log.
+//!
+//! # Concurrency
+//!
+//! Both functions are safe to call from any thread:
+//!
+//! - [`init_tracing`] is idempotent only in the sense that a second call
+//!   will panic (see Global state above).
+//! - [`install_rayon_panic_handler`] uses Rayon's
+//!   [`ThreadPoolBuilder::build_global`], which is itself idempotent — a
+//!   second call is a no-op.
+//!
+//! # Lifecycle
+//!
+//! ```text
+//! main()
+//!   ├── install_rayon_panic_handler()      # optional but recommended
+//!   ├── let _guard = init_tracing("logs")?  # keep _guard alive
+//!   ├── run application logic
+//!   └── _guard drops on exit -> log flush
+//! ```
 
 use std::path::Path;
 use tracing_subscriber::prelude::*;
@@ -25,6 +58,19 @@ use tracing_subscriber::prelude::*;
 /// Panics if the subscriber has already been initialized (e.g. by a previous
 /// call in the same process). In test code prefer
 /// `tracing::subscriber::with_default`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use find::telemetry::init_tracing;
+///
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     // Hold the guard for the whole program lifetime.
+///     let _guard = init_tracing("logs")?;
+///     tracing::info!("tracing initialised");
+///     Ok(())
+/// }
+/// ```
 pub fn init_tracing<P: AsRef<Path>>(
     log_dir: P,
 ) -> std::io::Result<tracing_appender::non_blocking::WorkerGuard> {
@@ -60,6 +106,23 @@ pub fn init_tracing<P: AsRef<Path>>(
 ///
 /// The handler extracts a `&str` or `String` message from the panic payload
 /// and logs it. Other payload types are logged as "unknown panic".
+///
+/// # Idempotency
+///
+/// The function uses Rayon's [`ThreadPoolBuilder::build_global`], which
+/// is itself idempotent — a second call is a no-op. This makes it safe
+/// to call from both the production binary and any test harness.
+///
+/// # Examples
+///
+/// ```no_run
+/// use find::telemetry::install_rayon_panic_handler;
+///
+/// fn main() {
+///     install_rayon_panic_handler();
+///     // ... application logic ...
+/// }
+/// ```
 pub fn install_rayon_panic_handler() {
     let _ = rayon::ThreadPoolBuilder::new()
         .panic_handler(|info| {
