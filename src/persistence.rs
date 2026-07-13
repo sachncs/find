@@ -308,6 +308,24 @@ impl FileCacheWriter {
 }
 
 impl CacheWriter for FileCacheWriter {
+    /// Writes a block of 32-byte X-coordinate entries at `offset`.
+    ///
+    /// # Performance
+    ///
+    /// On Unix this is a single `pwrite_at` call — no syscall for seeking,
+    /// no per-thread state to coordinate. The underlying kernel call
+    /// serialises against other writers via the file's `struct file`
+    /// lock; userspace contention is limited to the [`Mutex`] acquisition.
+    ///
+    /// On other platforms, the implementation falls back to
+    /// `seek + write_all`, which is two syscalls per block. The
+    /// additional syscall cost is amortised over the data block (~1 KiB),
+    /// so the throughput penalty is small in practice.
+    ///
+    /// # Errors
+    ///
+    /// Returns any I/O error from the underlying write operation (e.g.
+    /// `ENOSPC` on full disk, `EIO` on hardware fault).
     fn write_block(&self, offset: u64, data: &[u8]) -> std::io::Result<()> {
         // Mutex poisoning means a writer thread panicked while holding the
         // lock; we cannot recover the file handle's state, so we abort.
