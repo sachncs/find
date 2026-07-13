@@ -804,7 +804,16 @@ pub fn precompute_chunk<W: CacheWriter>(
 ///
 /// All hot-path arrays are stack-allocated to this size, guaranteeing O(1)
 /// space per batch regardless of the scalar range being swept.
-const MAX_BATCH: usize = 32;
+///
+/// This constant is intentionally equal to [`BATCH_SIZE`] and exposed as
+/// `pub` so that downstream consumers and benchmark authors can reason
+/// about the per-batch stack budget (~3 KB on x86_64:
+/// `32 × 96` bytes for [`ProjectivePoint`] + `32 × 32` bytes for the
+/// X-coordinate scratch buffer + a small [`AffinePoint`] mirror).
+///
+/// See [ADR-0002](../docs/adr/0002-batch-normalization.md) for the
+/// rationale behind the chosen size.
+pub const MAX_BATCH: usize = 32;
 
 /// Extracts the 32-byte big-endian X-coordinate from an affine point.
 ///
