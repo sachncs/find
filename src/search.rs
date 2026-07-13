@@ -421,6 +421,33 @@ impl Progress {
 /// blocks at arbitrary byte offsets. The trait is object-safe and is
 /// intended to be implemented by the `persistence` layer so that the search
 /// domain remains free of file-system details.
+///
+/// # Contract
+///
+/// Implementors must guarantee:
+///
+/// - **Atomic block writes**: the bytes written by a single `write_block`
+///   call appear contiguously and are not interleaved with other writers'
+///   bytes.
+/// - **Concurrency**: `write_block` may be called concurrently from
+///   multiple threads. The `Send + Sync` supertraits enforce this.
+/// - **Offset independence**: writes at non-overlapping offsets do not
+///   affect each other. Overlapping writes have implementation-defined
+///   semantics; the engine guarantees non-overlap by computing
+///   `offset = batch_idx * BATCH_SIZE * 32`.
+///
+/// # Examples
+///
+/// ```ignore
+/// use find::search::CacheWriter;
+///
+/// struct NullWriter;
+/// impl CacheWriter for NullWriter {
+///     fn write_block(&self, _offset: u64, _data: &[u8]) -> std::io::Result<()> {
+///         Ok(())
+///     }
+/// }
+/// ```
 pub trait CacheWriter: Send + Sync {
     /// Writes `data` starting at `offset` bytes into the cache.
     ///

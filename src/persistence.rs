@@ -236,6 +236,14 @@ impl Checkpoint {
 /// on other platforms it falls back to a mutex-protected seek-and-write. The
 /// mutex contention is negligible because each write is a single batch of
 /// ~1 KiB and occurs infrequently relative to ECC work.
+///
+/// # Thread safety
+///
+/// `FileCacheWriter` is `Send + Sync`: the inner [`File`] is wrapped in a
+/// [`std::sync::Mutex`] that serialises writes. Concurrent [`CacheWriter`]
+/// implementations may be created by sharing a `FileCacheWriter` via
+/// `Arc<FileCacheWriter>` or by passing it directly to
+/// [`search::precompute_chunk`].
 pub struct FileCacheWriter {
     file: std::sync::Mutex<File>,
 }
