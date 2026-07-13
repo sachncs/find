@@ -532,6 +532,56 @@ pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
 ///
 /// `Some(SearchMatch)` on the first match found, or `None` if the entire
 /// range is exhausted without a match.
+///
+/// # Performance
+///
+/// The hot-path cost is dominated by **one bootstrap scalar multiplication
+/// per batch plus `(count - 1)` mixed `+ G` additions**, vs. `count`
+/// independent scalar multiplications in a naive implementation. The
+/// mixed addition is ~12 field multiplications, vs. ~256 for a fresh
+/// scalar multiplication. This `+ G` chain is the dominant perf win of
+/// the search engine (~20× vs. independent scalar muls). See ADR-0002 for
+/// the full rationale.
+///
+/// Batch normalization uses Montgomery's simultaneous inversion to
+/// collapse 32 projective→affine conversions into a single inversion
+/// plus ~6 × 32 field multiplications (~15–20× speedup vs. sequential
+/// conversions).
+///
+/// # Pseudocode
+///
+/// ```text
+/// # Parallel for each batch of BATCH_SIZE scalars:
+/// let count = min(end - chunk_start + 1, BATCH_SIZE)
+/// let mut current = chunk_start * G                # bootstrap mul
+/// let mut points = []
+/// for _ in 0..count:
+///     points.push(current)
+///     current += G                                 # mixed addition, ~12 mults
+/// let affines = batch_normalize(points)            # one inversion for 32 points
+/// for (i, a) in affines.enumerate():
+///     let j = chunk_start + i
+///     if let Some(x) = X(a):
+///         if index.match_x(x, j) is Some(m):
+///             return m                             # early exit
+/// ```
+///
+/// # Examples
+///
+/// ```no_run
+/// use find::ecc;
+/// use find::search::{generate_variants, perform_chunked_sweep, VariantIndex};
+/// use k256::Scalar;
+///
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let target = ecc::scalar_mul_g(&Scalar::from(12345u64));
+///     let index = VariantIndex::new(generate_variants(&target));
+///     let m = perform_chunked_sweep(&index, 1, 100_000)
+///         .expect("match for d=12345 in [1, 100000]");
+///     assert!(m.candidates.iter().any(|c| c.to_lowercase() == "3039"));
+///     Ok(())
+/// }
+/// ```
 pub fn perform_chunked_sweep(index: &VariantIndex, start: u64, end: u64) -> Option<SearchMatch> {
     let start = start.max(1);
     if start > end {
@@ -606,6 +656,40 @@ pub fn perform_chunked_sweep(index: &VariantIndex, start: u64, end: u64) -> Opti
 /// # Panics
 ///
 /// Panics if Rayon worker threads panic during batch processing.
+///
+/// # Performance
+///
+/// Identical arithmetic to [`perform_chunked_sweep`]; the additional cost
+/// is one `write_block` call per batch (a single `pwrite_at` of ~1 KiB on
+/// Unix, an `O(1)` operation). The progress counter is updated once per
+/// batch, so it reflects the **actual** scalars processed (not a
+/// multiple of `BATCH_SIZE`).
+///
+/// The early-exit lock check at the top of each batch is lock-free in the
+/// common case: the worker takes the mutex briefly to inspect whether a
+/// match was already recorded, then releases it. Lock contention is
+/// negligible because the critical section is one branch.
+///
+/// # Pseudocode
+///
+/// ```text
+/// match_found = Mutex<None>
+/// batches.parallel_for_each(|batch_idx| {
+///     if match_found contains Some(_): return    # fast-path no-op
+///     let (chunk_start, count) = batch_bounds(batch_idx)
+///     let mut current = chunk_start * G
+///     let mut block = []
+///     for _ in 0..count:
+///         block.push(X(current))
+///         if let Some(idx) = index:
+///             if idx.match_x(X(current), j) is Some(m):
+///                 match_found = Some(m); return
+///         current += G
+///     writer.write_block(batch_offset, &block)?
+///     progress.add(count)
+/// })
+/// match_found.into_inner()
+/// ```
 pub fn precompute_chunk<W: CacheWriter>(
     start: u64,
     end: u64,
