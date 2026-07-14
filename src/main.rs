@@ -109,16 +109,26 @@ fn main() -> anyhow::Result<()> {
 /// This function performs no I/O beyond stdout and does not panic under
 /// normal [`find::search::SearchMatch`] input.
 fn render_success_report(m: find::search::SearchMatch, total_time: std::time::Duration) {
-    println!("\n{}", "=".repeat(60));
-    println!("MATCH DISCOVERED (Variant: {})", m.label);
-    println!("Shift scalar V: {}", m.offset);
-    println!("Search scalar j: {}", m.small_scalar);
-    println!("Target candidates (d = V +/- j):");
+    // Build the full banner in a single `String` (one allocation) and write
+    // it once. The previous per-line `println!` did nine separate
+    // `format!`-style allocations plus nine `STDOUT_LOCK` acquisitions.
+    let separator = "=".repeat(60);
+    let mut out = String::with_capacity(512);
+    out.push('\n');
+    out.push_str(&separator);
+    out.push('\n');
+    use std::fmt::Write;
+    let _ = writeln!(out, "MATCH DISCOVERED (Variant: {})", m.label);
+    let _ = writeln!(out, "Shift scalar V: {}", m.offset);
+    let _ = writeln!(out, "Search scalar j: {}", m.small_scalar);
+    out.push_str("Target candidates (d = V +/- j):\n");
     for (i, c) in m.candidates.iter().enumerate() {
-        println!("  [{}] 0x{}", i + 1, c);
+        let _ = writeln!(out, "  [{}] 0x{}", i + 1, c);
     }
-    println!("Total Search Duration: {:?}", total_time);
-    println!("{}", "=".repeat(60));
+    let _ = writeln!(out, "Total Search Duration: {:?}", total_time);
+    out.push_str(&separator);
+    out.push('\n');
+    print!("{out}");
 }
 
 #[cfg(test)]
