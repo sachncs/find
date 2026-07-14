@@ -34,3 +34,6 @@ ADRs are **immutable once accepted**. If a decision changes, write a new ADR tha
 | [0004](0004-error-hierarchy.md) | Single `FindError` enum | Accepted |
 | [0005](0005-pure-search-module.md) | Pure `search` module with `CacheWriter` trait | Accepted |
 | [0006](0006-binary-cache-format.md) | Raw 32-byte X-coordinate binary cache | Accepted |
+| [0007](0007-y-parity-ambiguity.md) | Y-parity ambiguity: why the engine emits two candidates per match | Accepted |
+| [0008](0008-mutex-poisoning-policy.md) | Mutex poisoning policy — **partially superseded** by [ADR-0006](../optimization-decisions/0007-oncelock-early-exit.md): `precompute_chunk` no longer holds a `Mutex` (commit 6), so the recovery-policy example in 0008 no longer applies to it. 0008 still applies to the non-Unix `FileCacheWriter` fallback in `src/persistence.rs`. | Accepted (in part) |
+| [0009](0009-runtime-batch-size.md) | Runtime-sized hot-path batch arrays: `Vec<T>` sized against `Config::batch_size ∈ 1..=256` | Accepted |
