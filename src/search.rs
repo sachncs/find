@@ -61,7 +61,6 @@
 
 use crate::ecc;
 use crate::error::{FindError, Result};
-use k256::elliptic_curve::bigint::ArrayEncoding;
 use k256::elliptic_curve::bigint::U256;
 use k256::elliptic_curve::group::Curve;
 use k256::elliptic_curve::ops::Reduce;
@@ -959,11 +958,58 @@ fn scalar_to_hex_trimmed(s: &Scalar) -> String {
 
 /// Converts a [`U256`] to a decimal string.
 ///
-/// This is used for display and serialization; it is not on the hot path.
+/// Used for display and serialization of variant offsets. Runs once per
+/// variant at startup (~512 calls per session) so allocation pressure
+/// is small, but this implementation avoids the `num_bigint::BigUint`
+/// round-trip entirely: it parses the 256-bit big-endian limbs into a
+/// stack-allocated decimal representation using repeated divmod by 10.
+///
+/// # Performance
+///
+/// O(N²) in the number of digits, where N ≤ 78 for a 256-bit value.
+/// Each iteration is one 256-bit divmod (a constant-cost operation on
+/// `crypto_bigint::U256`) plus one byte write to a `String`. Avoids the
+/// heap allocation that `BigUint::from_bytes_be(...).to_string()` would
+/// incur.
 fn u256_to_decimal(v: &U256) -> String {
-    use num_bigint::BigUint;
+    use k256::elliptic_curve::bigint::Zero;
+    if bool::from(v.is_zero()) {
+        return "0".to_string();
+    }
+    let mut digits: Vec<u8> = Vec::with_capacity(80);
+    let mut rem: U256 = *v;
+    while !bool::from(rem.is_zero()) {
+        let (q, r) = div_rem_u256_by_u64(rem, 10);
+        digits.push(b'0' + r as u8);
+        rem = q;
+    }
+    digits.reverse();
+    // SAFETY: every byte in `digits` is in `b'0'..=b'9'` (ASCII digits).
+    unsafe { String::from_utf8_unchecked(digits) }
+}
+
+/// Computes `self / d` and `self % d` for `U256 / u64`.
+///
+/// `crypto_bigint::U256` exposes its limbs via `to_be_byte_array()` /
+/// `from_be_byte_array()`; the most direct way to divmod by a small
+/// divisor is to walk the bytes big-endian, maintaining a running
+/// 16-bit remainder.
+#[inline]
+fn div_rem_u256_by_u64(v: U256, d: u64) -> (U256, u64) {
+    use k256::elliptic_curve::bigint::ArrayEncoding;
+    debug_assert!(d > 0);
     let bytes = v.to_be_byte_array();
-    BigUint::from_bytes_be(&bytes).to_string()
+    let mut out = [0u8; 32];
+    let mut rem: u64 = 0;
+    for i in 0..32 {
+        let acc = (rem << 8) | bytes[i] as u64;
+        let q = (acc / d) as u8;
+        rem = acc % d;
+        out[i] = q;
+    }
+    // `from_be_byte_array` takes a `GenericArray<u8, _>`; we convert
+    // via the `Into` impl that wraps a `[u8; N]` into the right shape.
+    (U256::from_be_byte_array(out.into()), rem)
 }
 
 #[cfg(test)]
