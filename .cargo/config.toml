@@ -1,0 +1,30 @@
+# Build configuration for the find tool.
+#
+# `target-cpu=native` enables the host CPU's full SIMD/AVX2/AVX-512
+# instruction set for release builds. secp256k1 scalar multiplication
+# in k256 is dominated by 256-bit field multiplications; modern x86_64
+# CPUs expose MULX/ADCX which a generic -march=x86-64 doesn't enable.
+#
+# Benchmark builds use the same flags so cycle counts reflect the
+# production configuration.
+#
+# Trade-off: binaries built with this config are not portable to older
+# CPUs. The CI workflow (see .github/workflows/ci.yml) builds with
+# the default target so binary compatibility is verified in CI.
+[build]
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "target-cpu=native"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=native"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=native"]

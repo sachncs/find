@@ -66,3 +66,18 @@ codegen-units = 1
 panic = 'abort'
 strip = true
 overflow-checks = true
+
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = false
+panic = 'abort'
+
+# Per-package optimisation: force release-grade codegen for every
+# dependency used in the hot path. Without this, `rayon` and `k256`
+# build with the default `dev` profile optimisation under
+# `cargo bench` even when --release is implied, which produces
+# misleading cycle counts.
+[profile.release.package."*"]
+opt-level = 3
