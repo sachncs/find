@@ -12,6 +12,22 @@ The system is built on three core pillars:
 
 These pillars are operationalized through the layers described below. The decisions behind them are recorded as ADRs (see [ADR-0001](adr/0001-multi-variant-search.md), [ADR-0002](adr/0002-batch-normalization.md), [ADR-0003](adr/0003-atomic-checkpointing.md)).
 
+## Data layout
+
+The runtime memory footprint, by layer:
+
+| Component | Stack | Heap | Notes |
+|---|---|---|---|
+| `search::pow_of_two_g` | 256 × 96 B ≈ 24 KiB | — | Stack-allocated point-doubling table |
+| `search::points[batch]` | 32 × 96 B ≈ 3 KiB | — | Stack-allocated hot-path batch |
+| `search::affines[batch]` | 32 × 96 B ≈ 3 KiB | — | Stack-allocated post-normalization |
+| `search::block[32×32]` | 1 KiB | — | Stack-allocated cache write block |
+| `search::VariantIndex::keys` | — | 16 KiB | L1-resident X-coords (Vec<[u8; 32]>) |
+| `search::VariantIndex::order` | — | 4 KiB | Cold permutation (Vec<usize>) |
+| `search::VariantIndex::variants` | — | ~48 KiB | Cold variant metadata |
+| `persistence::BufReader` | — | 8 KiB default | I/O scratch (only used in cached path) |
+| Total | ~32 KiB / worker | ~76 KiB / session | Heap usage dominated by 512-variant set |
+
 ## System overview
 
 ```mermaid
