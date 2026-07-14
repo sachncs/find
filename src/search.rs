@@ -64,7 +64,6 @@ use crate::error::{FindError, Result};
 use k256::elliptic_curve::bigint::U256;
 use k256::elliptic_curve::group::Curve;
 use k256::elliptic_curve::ops::Reduce;
-use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -849,17 +848,20 @@ pub fn precompute_chunk<W: CacheWriter>(
         (range_len - 1) / BATCH_SIZE + 1
     };
     let match_found: Mutex<Option<SearchMatch>> = Mutex::new(None);
+    // `AtomicBool` fast-path for the early-exit check: workers spin on this
+    // with `Relaxed` ordering so the hot path costs one atomic load instead
+    // of a `Mutex::lock`. The mutex is only acquired when a worker actually
+    // has a match to publish, after which it stores through the mutex and
+    // flips the flag with `Release` so other workers see the publication.
+    let match_published = std::sync::atomic::AtomicBool::new(false);
 
     (0..num_batches)
         .into_par_iter()
         .try_for_each(|batch_idx| -> Result<()> {
             // Fast-path check without locking — if another worker already
             // found a match, skip this batch entirely.
-            {
-                let guard = match_found.lock();
-                if guard.is_ok_and(|g| g.is_some()) {
-                    return Ok(());
-                }
+            if match_published.load(Ordering::Relaxed) {
+                return Ok(());
             }
 
             let batch_offset = batch_idx * BATCH_SIZE;
@@ -888,28 +890,30 @@ pub fn precompute_chunk<W: CacheWriter>(
 
             for (i, affine) in affines.iter().enumerate().take(count) {
                 let j = chunk_start + i as u64;
-                let encoded = affine.to_encoded_point(false);
-                let x_bytes = match encoded.x() {
-                    Some(x) => x.as_ref(),
+                let x_bytes = match affine_x_bytes(affine) {
+                    Some(x) => x,
                     None => continue,
                 };
 
                 if let Some(idx_ref) = index {
-                    let mut test_x = [0u8; 32];
-                    test_x.copy_from_slice(x_bytes);
-                    if let Some(m) = idx_ref.match_x(&test_x, j) {
+                    if let Some(m) = idx_ref.match_x(&x_bytes, j) {
                         local_match = Some(m);
                         break;
                     }
                 }
 
-                block[block_len..block_len + 32].copy_from_slice(x_bytes);
+                block[block_len..block_len + 32].copy_from_slice(&x_bytes);
                 block_len += 32;
             }
 
             if let Some(m) = local_match {
                 if let Ok(mut guard) = match_found.lock() {
                     *guard = Some(m);
+                    // Release ordering: any thread that observes
+                    // match_published == true via the next Acquire/Relaxed
+                    // load is guaranteed to see the match stored in the
+                    // mutex above.
+                    match_published.store(true, Ordering::Release);
                 }
                 return Ok(());
             }
@@ -1057,10 +1061,9 @@ mod tests {
         let index = VariantIndex::new(variants);
 
         let p_999 = ecc::scalar_mul_g(&Scalar::from(999u64));
-        let encoded = p_999.to_affine().to_encoded_point(false);
-        let x_bytes = encoded.x().unwrap();
         let mut x_999 = [0u8; 32];
-        x_999.copy_from_slice(x_bytes.as_ref());
+        let x = ecc::x_bytes(&p_999).expect("non-identity has an X");
+        x_999.copy_from_slice(&x);
 
         let m = index.match_x(&x_999, 999).unwrap();
         assert!(m.label == "2^0" || m.label == "sum(2^0..2^0)");
@@ -1238,10 +1241,9 @@ mod tests {
         // d = 2 means j = 1 for V = 1.
         let index = VariantIndex::new(variants);
         let p_1 = ecc::scalar_mul_g(&Scalar::from(1u64));
-        let encoded = p_1.to_affine().to_encoded_point(false);
-        let x_bytes = encoded.x().unwrap();
+        let x = ecc::x_bytes(&p_1).expect("non-identity has an X");
         let mut x_1 = [0u8; 32];
-        x_1.copy_from_slice(x_bytes.as_ref());
+        x_1.copy_from_slice(&x);
 
         let m = index
             .match_x(&x_1, 1)
