@@ -349,6 +349,66 @@ The X-coordinate matching cannot distinguish the Y-parity of `P - V·G`. Both ca
 
 This is a fundamental property of X-coordinate matching, not a bug. The tool does not attempt to disambiguate because doing so would require additional operations that are out of scope for the research-pedagogical use case.
 
+## Worked example: d = 7
+
+This section walks through a complete small-scalar discovery for
+`d = 7`, the same scalar used as a regression target in
+`tests/integration.rs::test_mandatory_random_6_to_8_digits`. The
+target is `P = 7·G`. We pick the `V = 1` variant (i.e. `2^0`) and
+demonstrate the full pipeline.
+
+### Step 1 — Variant construction
+
+```
+V = 1 (the 2^0 variant)
+shifted = P - V·G = 7·G - 1·G = 6·G
+x_bytes = x(6·G)        # 32-byte big-endian X coordinate
+```
+
+The 512-variant set is constructed once; the `2^0` variant's
+`x_bytes` is sorted into the `VariantIndex`.
+
+### Step 2 — Sweep
+
+```
+j starts at 1
+current = j · G
+current += G per step       # +G increment chain
+
+j = 6:  current = 6·G
+       affine_x_bytes(current) extracts x(6·G)
+       match_x(x(6·G), 6) hits the 2^0 variant at index idx
+       var = variants[idx]
+```
+
+### Step 3 — Candidate derivation
+
+```
+V + j = 1 + 6 = 7            # positive parity
+V - j = 1 - 6 = -5 mod n     # negative parity
+```
+
+The tool returns both candidates. External validation confirms
+that `candidate_1 · G = P`, so `d = 7`. The negative-parity
+candidate evaluates to `(n - 5) · G`, which is also returned for
+completeness.
+
+### Step 4 — Why the 2^0 variant matters
+
+For `d ∈ {1, 2, 3, 4, 5, 6, 7}`, the `V = 1` variant produces the
+smallest possible `shifted` and therefore the most likely match.
+In practice, every small scalar in `[1, 2^k]` is matched by at
+least one of the first `k` batches for some variant anchor.
+
+### Worked example: d = 1_234_567_890
+
+For larger scalars the same algorithm applies, but the matching
+variant is typically a cumulative sum rather than a power of two.
+Suppose `d = 2^30 + 4`. Then `V = 2^30` (the `2^30` variant) and
+`j = 4` produces a match at the fourth sweep step. The variant
+generation computes `shifted = (2^30 + 4)·G - 2^30·G = 4·G` whose
+X-coordinate equals `x(4·G)`, found at `j = 4` in the sweep.
+
 ## Edge cases
 
 ### Small scalars
