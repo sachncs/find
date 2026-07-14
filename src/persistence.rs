@@ -433,9 +433,12 @@ pub fn perform_cached_sweep(
         }
 
         // Slice out the next 32-byte X-coordinate and probe the index.
-        let chunk: [u8; 32] = buffer[buf_pos..buf_pos + 32]
-            .try_into()
-            .expect("buffer slice is exactly 32 bytes");
+        // copy_from_slice panics with a clear message if the buffer is
+        // exhausted mid-copy (which the surrounding `if buf_pos >=
+        // buf_len` refill check prevents); no slice-bounds check is
+        // duplicated here.
+        let mut chunk = [0u8; 32];
+        chunk.copy_from_slice(&buffer[buf_pos..buf_pos + 32]);
         buf_pos += 32;
 
         if let Some(m) = index.match_x(&chunk, j) {
