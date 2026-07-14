@@ -2,7 +2,7 @@
   <h1 align="center">Secp256k1 Find Tool</h1>
   <p align="center">High-performance secp256k1 private-key discovery using range-splitting and Montgomery batch inversion.</p>
   <p align="center">
-    <a href="#installation"><img src="https://img.shields.io/badge/rust-1.70%2B-orange" alt="Rust"></a>
+    <a href="#installation"><img src="https://img.shields.io/badge/rust-1.81%2B-orange" alt="Rust"></a>
     <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
     <a href="https://github.com/sachncs/find/actions"><img src="https://img.shields.io/github/actions/workflow/status/sachncs/find/ci.yml?branch=master" alt="CI"></a>
     <a href="https://crates.io/crates/find"><img src="https://img.shields.io/crates/v/find" alt="crates.io"></a>
@@ -23,15 +23,19 @@ and offsets `V` such that `x(j·G) = x(P - V·G)`, yielding key candidates
 
 ## Features
 
-- **512-Variant Search Engine** — Range-splitting using powers of 2 and cumulative summations.
+- **512-Variant Search Engine** — Range-splitting using powers of 2 and cumulative summations; the 512-variant set is interned once per process (no per-session allocations).
+- **Runtime-sized batch arrays** — `Vec<ProjectivePoint>` / `Vec<AffinePoint>` / `Vec<u8>` sized against `Config::batch_size` (1..=256). See [ADR-0009](docs/adr/0009-runtime-batch-size.md).
 - **Batch Normalization** — Montgomery's simultaneous inversion for ~15–20× speedup in the normalization phase.
 - **Parallel Sweep** — Work-stealing data-level parallelism via `rayon` with early-exit.
+- **Lock-free cross-batch coordination** — `OnceLock<SearchMatch>` replaces the previous `Mutex + AtomicBool` pair (see [opt-decision 0007](docs/optimization-decisions/0007-oncelock-early-exit.md)).
 - **Binary Caching** — Optional precomputation for I/O-bound cache scans (~100× speedup on NVMe).
 - **Atomic Checkpointing** — Write-then-rename for crash-safe state persistence with integrity anchor.
 - **Structured Observability** — Non-blocking rolling file logs with `tracing`.
 - **Comprehensive Testing** — Property-based, integration, orchestrator, audit, KAT, and differential test suites.
 - **Differential Testing** — Cross-implementation verification against `libsecp256k1` (the reference C implementation).
-- **Fuzz Testing** — Three fuzz targets for the public APIs (`parse_pubkey`, `hex_to_scalar`, `scalar_mul_g`).
+- **Fuzz Testing** — Six cargo-fuzz targets for the public APIs (`parse_pubkey`, `parse_pubkey_roundtrip`, `hex_to_scalar`, `scalar_mul_g`, `generate_variants`, `match_x`).
+- **Strict Lint Configuration** — Curated `pedantic + nursery` clippy sets with a documented allow-list, gated by `-D warnings`.
+- **Required-for-merge `cargo miri`** — Every PR runs `cargo +nightly miri test --workspace --all-features` on `ubuntu-latest`.
 
 ---
 
@@ -53,7 +57,7 @@ cargo build --release
 
 ### Requirements
 
-- Rust 1.70 or later
+- Rust **1.81** or later (the MSRV was bumped in commit 16 to use the stable `core::error::Error` trait)
 - Supported platforms: Linux, macOS, Windows (x86_64 and aarch64)
 
 ---
@@ -69,7 +73,7 @@ find --pubkey 0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798
 # Generate binary cache during search (~32 GB per billion scalars)
 find --pubkey 0279be66... --cache-points
 
-# Tune batch size and variant count (advanced)
+# Tune batch size and variant count (advanced; commits 7a/7b honour both at runtime)
 find --pubkey 0279be... --batch-size 64 --variants 256
 
 # Custom data and log directories
@@ -81,13 +85,24 @@ For a guided walkthrough, see [docs/getting-started.md](docs/getting-started.md)
 ### Rust API (library)
 
 ```rust
-use find::{parse_pubkey, Config, SearchEngine};
+use find::config::Config;
+use find::ecc;
+use find::orchestrator;
 
-let pk = parse_pubkey("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")?;
-let cfg = Config::default();
-let engine = SearchEngine::new(cfg);
-// engine.run(pk)?
+let pubkey = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+let config = Config::new(pubkey, "data", false)
+    .try_with_batch_size(32)?      // 1..=256; returns FindError::InvalidConfig on out-of-range
+    .try_with_variant_count(512)?; // 1..=512
+
+let match_ = orchestrator::run(&config)?;
+if let Some(m) = match_ {
+    println!("MATCH DISCOVERED via {} at j={}", m.label, m.small_scalar);
+    println!("Candidates (d = V ± j): {:?}", m.candidates_hex());
+}
+# Ok::<(), find::error::FindError>(())
 ```
+
+The high-level entry point is `find::orchestrator::run(&Config) -> Result<Option<SearchMatch>, FindError>`. The `[Scalar; 2]` candidate array from [`SearchMatch`] can be inspected directly (`m.candidates`) or converted to hex via the `candidates_hex()` accessor for display.
 
 ---
 
@@ -100,24 +115,30 @@ let engine = SearchEngine::new(cfg);
 | Log filter | `RUST_LOG` | `info` | Log level filter (e.g. `debug`, `trace`) |
 | Backtraces | `RUST_BACKTRACE` | `0` | Set to `1` for backtraces on panic |
 
-### Compile-time Constants
+### Compile-time Constants and Runtime Defaults
 
-| Constant | Value | Purpose |
-|----------|-------|---------|
-| `TRILLION` | `1,000,000,000,000` | Step size for audit boundary logging |
-| `CACHE_CHUNK_SIZE` | `1,000,000,000` | Scalars per cache chunk |
-| `BATCH_SIZE` | `32` | Points per batch normalization |
-| `MAX_SEARCH` | `u64::MAX` | Sweep upper bound |
+| Symbol | Value | Source | Purpose |
+|--------|-------|--------|---------|
+| `TRILLION` | `1_000_000_000_000` | `src/orchestrator.rs` | Step size for audit-boundary logging |
+| `DEFAULT_CACHE_CHUNK_SIZE` | `1_000_000_000` | `src/orchestrator.rs` | Scalars per cache chunk |
+| `BatchSize::DEFAULT.get()` | `32` | `src/config.rs` | Default batch size |
+| `BatchSize::MAX` | `256` | `src/config.rs` | Largest legal batch size |
+| `MAX_VARIANT_COUNT` | `512` | `src/config.rs` | Largest legal variant count |
+| `MAX_SEARCH` | `u64::MAX` | `src/orchestrator.rs` | Sweep upper bound |
+
+The `DEFAULT_BATCH_SIZE` constant is retained as the public default for benchmark / documentation use; the runtime controlling value is `Config::batch_size` of type `BatchSize` (commit 7a).
 
 ### CLI Flags
 
-| Flag | Default | Range | Effect |
-|------|---------|-------|--------|
-| `--batch-size` | `32` | `1..=256` | Points per Montgomery batch |
-| `--variants` | `512` | `1..=512` | Powers-of-two + cumulative sum variants |
-| `--cache-points` | `false` | bool | Persist X-coords to disk for I/O-bound re-runs |
+| Flag | Type | Default | Range | Effect |
+|------|------|---------|-------|--------|
+| `--batch-size` | `u32` | `32` | `1..=256` | Points per Montgomery batch normalization; honoured at runtime (commit 7b) |
+| `--variants` | `u32` | `512` | `1..=512` | Powers-of-two + cumulative-sum variants |
+| `--cache-points` | `bool` | `false` | — | Persist X-coords to disk for I/O-bound re-runs |
 
-See [docs/configuration.md](docs/configuration.md) for the full configuration reference.
+Out-of-range `--batch-size` or `--variants` values are reported as `FindError::InvalidConfig` and cause the binary to exit with a non-zero status (no panic).
+
+See [docs/configuration.md](docs/configuration.md) for the full configuration reference, including the curated `[lints]` config that drives `cargo clippy --all-targets --all-features -- -D warnings`.
 
 ---
 
@@ -125,22 +146,23 @@ See [docs/configuration.md](docs/configuration.md) for the full configuration re
 
 The hot loop is dominated by:
 
-- One bootstrap scalar multiplication per 32-scalar batch (~256 field mults).
-- 31 mixed `+G` additions (~12 field mults each).
-- Montgomery simultaneous inversion over the 32-point batch.
+- One bootstrap scalar multiplication per `batch_size`-sized batch (~256 field mults at the default `batch_size = 32`).
+- `batch_size - 1` mixed `+G` additions (~12 field mults each).
+- Montgomery simultaneous inversion over the `batch_size`-point batch.
 - A binary-search `match_x` in a 16 KiB L1-resident key array.
 
-The cumulative wall-clock cost of the per-session cold start is dominated by
-**variant generation** (now 256 scalar multiplications + 256 point doublings +
-256 mixed additions, vs. 512 scalar multiplications in the original
-implementation — see
-[docs/optimization-decisions/0001-affinepoint-x-direct.md](docs/optimization-decisions/0001-affinepoint-x-direct.md)
-and following).
-
 For the per-batch hot loop, the dominant cost is the **bootstrap scalar
-multiplication** (~80% of per-batch cycles). Increasing `BATCH_SIZE` beyond 64
+multiplication** (~80% of per-batch cycles). Increasing `batch_size` beyond 64
 has diminishing returns; the `+G` chain + Montgomery normalize + match together
-take the remaining 20%.
+take the remaining 20%. The batch-size choice now trades against per-batch
+allocation cost (the hot-path arrays are heap-allocated and sized at
+runtime) — see [ADR-0009](docs/adr/0009-runtime-batch-size.md).
+
+The per-session cold-start cost of `generate_variants` is now effectively
+free on the happy path: the 512-entry variant metadata (label, scalar,
+decimal offset) is interned via `OnceLock<Box<[OffsetVariant; 512]>>` once
+per process. Only the target-specific `compute_variant_x_bytes` remains
+per-session work. See [opt-decision 0002](docs/optimization-decisions/0002-variant-labels-once-lock.md) and the new `optimization-decisions/0007-oncelock-early-exit.md` for the surrounding decisions.
 
 For sustained workloads, the cached sweep path is ~100× faster than the
 CPU-bound path on NVMe hardware (see [docs/performance.md](docs/performance.md)
@@ -149,22 +171,60 @@ for the full guide).
 Reproduce the published cycle counts:
 
 ```bash
-cargo bench                       # criterion microbenchmarks
-scripts/build-pgo.sh              # profile-guided optimized build
-scripts/run-benchmarks.sh         # benchmark wrapper
+cargo bench --bench bench                               # criterion microbenchmarks
+cargo bench --bench bench -- --baseline current -- --threshold 5  # 5% regression gate
+scripts/build-pgo.sh                                   # profile-guided optimized build
+scripts/run-benchmarks.sh                              # benchmark wrapper
 ```
 
 ---
 
 ## Research Reproducibility
 
-The codebase ships with three independent verification layers:
+The codebase ships with five independent verification layers:
 
-- **KAT tests** (`tests/kat.rs`): 11 known-answer tests against SEC1 §2.7.1 vectors and `k256` reference outputs.
+- **KAT tests** (`tests/kat.rs`): 13 known-answer tests against SEC1 §2.7.1 vectors and `k256` reference outputs, plus the `to_hex_x` ↔ `x_bytes` round-trip regression test from commit 4 (`kat_to_hex_x_matches_x_bytes_hex` + `prop_to_hex_x_equals_x_bytes_hex`).
 - **Differential tests** (`tests/differential.rs`): cross-check `k256` against the reference C `libsecp256k1` for 12 boundary scalars (1, 2, 3, 7, 100, 1k, 1M, 1.2G, 2^32, 2^63, u64::MAX, …).
 - **Audit tests** (`tests/audit.rs`): end-to-end pipeline (parse → variants → sweep → recover) for the known scalar `1234567890` plus a 20-case proptest over `[2, 10_000]`.
+- **Integration tests** (`tests/integration.rs`): randomized discovery + the new `prop_batch_size_runtime` proptest that exercises `--batch-size in 1..=256` and verifies the resulting match is invariant under the batch choice.
+- **Unit tests** (in `src/`): every public function in `search`, `ecc`, `config`, and `error` has a unit test (71 lib tests at last count).
 
-Run all three with `cargo test --all-targets --all-features`.
+Run all five with `cargo test --all-targets --all-features`. The full local pre-commit gate (mirrors CI) is:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+cargo test --doc
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+cargo +nightly miri test --workspace --all-features    # required for merges touching unsafe
+```
+
+---
+
+## Migration (0.1.6 → 0.2.0)
+
+The next release (`v0.2.0`) ships the breaking changes that landed during the
+review-driven pass:
+
+| API | Before (0.1.6) | After (0.2.0) |
+|---|---|---|
+| `Config::batch_size` field | `pub batch_size: u32` | `pub batch_size: BatchSize` (commit 7a) |
+| `Config::{with_batch_size, with_variant_count}` builders | `fn(self, u32) -> Self` (panicking) | `#[deprecated]`; replaced by `try_with_*` builders returning `Result<Self, FindError>` |
+| `--batch-size` honoured at runtime | ignored; fixed at `MAX_BATCH = 32` | honoured via heap-allocated runtime-sized batches (commit 7b) |
+| `Config::validate` | shallow check only | `Config::validate()` retained (shallow) + new `Config::validate_pubkey()` deep validation (commit 3) |
+| `find::search::SearchMatch::candidates` | `pub candidates: [String; 2]` | `pub candidates: [Scalar; 2]` (commit 12, breaking) |
+| `SearchMatch::candidates_as_scalars` | `pub fn(&self) -> Result<[Scalar; 2]>` | `pub fn(&self) -> [Scalar; 2]` (no parsing needed) |
+| `SearchMatch::candidates_hex()` | (did not exist) | new: returns `[String; 2]` |
+| `find::search::generate_variants` | `-> Vec<OffsetVariant>` | `-> &'static [OffsetVariant]` (commit 7c, breaking) |
+| `find::search::VariantIndex::new` | `fn(variants: Vec<OffsetVariant>) -> Self` | `fn(variants: &'static [OffsetVariant], x_bytes: &[[u8; 32]]) -> Self` |
+| `find::search::OffsetVariant` | carries `x_bytes: [u8; 32]` | no longer carries `x_bytes` (use new `compute_variant_x_bytes` helper) |
+| `find::config::SweepRange` | available | **removed** (commit 8) |
+| `find::search::MAX_BATCH` const | `pub const MAX_BATCH: usize = 32` | **removed** (commit 7b) |
+| Doctest `Box<dyn std::error::Error>` | in 6+ places | replaced with `Box<dyn core::error::Error>` (commit 16, MSRV 1.81) |
+| MSRV | 1.70 | **1.81** (commit 16) |
+
+The full review-driven pass added (without breaking the API): `BatchSize` newtype + `try_with_*` builders, run-time batch sizing, `OnceLock<SearchMatch>` coordination, interned static variant metadata, strict `cargo clippy -D warnings` (with curated pedantic + nursery sets), and the required-for-merge `cargo miri` job.
 
 ---
 
@@ -173,14 +233,18 @@ Run all three with `cargo test --all-targets --all-features`.
 All project documentation lives under [`docs/`](docs/README.md). Highlights:
 
 - [docs/overview.md](docs/overview.md) — Project goals, scope, supported platforms
-- [docs/architecture.md](docs/architecture.md) — System architecture, data flow, concurrency
+- [docs/architecture.md](docs/architecture.md) — System architecture, data flow, concurrency, sync primitives
 - [docs/algorithms.md](docs/algorithms.md) — Mathematical foundation and pseudocode
 - [docs/cli.md](docs/cli.md) — Full CLI reference
 - [docs/configuration.md](docs/configuration.md) — Environment variables and constants
+- [docs/modules.md](docs/modules.md) — Module-by-module reference for the `find` crate
 - [docs/observability.md](docs/observability.md) — Logging, tracing, audit boundaries
 - [docs/performance.md](docs/performance.md) — Performance characteristics and tuning
 - [docs/testing.md](docs/testing.md) — Testing strategy and methodology
 - [docs/security.md](docs/security.md) — Security model
+- [docs/glossary.md](docs/glossary.md) — Terms, abbreviations, definitions
+- [docs/adr/](docs/adr/README.md) — Architecture Decision Records (0001–0009)
+- [docs/optimization-decisions/](docs/optimization-decisions/README.md) — Per-optimization rationale (0001–0007)
 
 ---
 
@@ -189,26 +253,37 @@ All project documentation lives under [`docs/`](docs/README.md). Highlights:
 ```
 find/
 ├── src/
-│   ├── lib.rs          # Library root; exports ecc, error, search, config, telemetry
-│   ├── main.rs         # CLI wrapper; tracing bootstrap
-│   ├── config.rs       # Session configuration types and validation
-│   ├── ecc.rs          # SEC1 parsing, point arithmetic, scalar conversion
-│   ├── error.rs        # Unified FindError hierarchy
-│   ├── orchestrator.rs # Session management and resume logic
-│   ├── persistence.rs  # Checkpoint read/write with atomic operations
-│   ├── search.rs       # Pure search engine, VariantIndex, binary caching
-│   └── telemetry.rs    # Tracing initialization helpers
+│   ├── lib.rs          # Crate root; #![warn(missing_docs)] + #![warn(rustdoc::broken_intra_doc_links)]
+│   ├── main.rs         # CLI binary entry point
+│   ├── config.rs       # Config, BatchSize newtype, validation, MAX_BATCH_SIZE / MAX_VARIANT_COUNT
+│   ├── ecc.rs          # SEC1 parsing, point arithmetic, hex conversion, to_hex_x
+│   ├── error.rs        # FindError (8 variants) + Result alias
+│   ├── search.rs       # Pure domain logic: VariantIndex, generate_variants, perform_chunked_sweep,
+│   │                   #   precompute_chunk, compute_variant_x_bytes, CacheWriter trait, Progress
+│   ├── persistence.rs  # Checkpoint save/load, FileCacheWriter, perform_cached_sweep,
+│   │                   #   save_variants_to_json (the only libc::fsync unsafe lives here)
+│   ├── orchestrator.rs # run(&Config) entry point + checkpoint/lifecycle loop
+│   └── telemetry.rs    # tracing-subscriber + Rayon panic handler
 ├── tests/
-│   ├── audit.rs        # End-to-end key recovery verification
-│   ├── differential.rs # Cross-implementation verification vs libsecp256k1
-│   ├── integration.rs  # Randomized discovery and edge case tests
-│   ├── kat.rs          # Known-Answer Tests for crypto primitives
-│   └── orchestrator.rs # Session flow and checkpoint tests
+│   ├── audit.rs        # End-to-end key recovery + 20-case proptest
+│   ├── differential.rs # Cross-check vs libsecp256k1 (12 boundary scalars)
+│   ├── integration.rs  # Randomized discovery, prop_batch_size_runtime,
+│   │                   #   prop_search_finds_any_scalar_in_range, edge cases
+│   ├── kat.rs          # 13 known-answer tests + to_hex_x round-trip
+│   └── orchestrator.rs # Session flow + checkpoint-resume + corruption rejection
 ├── benches/
-│   └── bench.rs        # Criterion micro-benchmarks
-├── fuzz/               # cargo-fuzz targets (parse_pubkey, hex_to_scalar, scalar_mul_g)
-├── docs/               # Architecture, algorithms, operations, ADRs
-├── Cargo.toml          # Package metadata and dependencies
+│   └── bench.rs        # Criterion micro-benchmarks (9 cases including x_bytes,
+│                       #   batch_normalization, +G chain, end-to-end)
+├── fuzz/
+│   └── fuzz_targets/   # cargo-fuzz targets (6):
+│       ├── parse_pubkey.rs
+│       ├── parse_pubkey_roundtrip.rs
+│       ├── hex_to_scalar.rs
+│       ├── scalar_mul_g.rs
+│       ├── generate_variants.rs
+│       └── match_x.rs
+├── docs/               # Architecture, algorithms, ADRs, optimization decisions
+├── Cargo.toml          # Package metadata, deps, [lints], profiles
 └── README.md
 ```
 
@@ -222,6 +297,7 @@ cargo test
 cargo bench
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all -- --check
+cargo +nightly miri test --workspace --all-features   # required if you touched unsafe
 ```
 
 The project also ships a `Makefile`:
@@ -231,10 +307,13 @@ The project also ships a `Makefile`:
 | `make build` | Compile production binary (opt-level=3, lto=fat) |
 | `make test` | Run exhaustive test suite |
 | `make bench` | Run micro-benchmarks with Criterion |
-| `make lint` | Run formatting and clippy checks |
+| `make lint` | Run fmt + clippy + doc checks |
 | `make doc` | Generate and open API documentation |
-| `make coverage` | Generate HTML coverage report |
-| `make deny` | Run cargo-deny for license/dependency auditing |
+| `make coverage` | Generate HTML coverage report (`cargo tarpaulin`) |
+| `make deny` | Run `cargo-deny` for license/dependency auditing |
+| `make all-checks` | Run the full verification suite (`scripts/check-all.sh`) |
+
+The **local pre-commit gate** (mirrors CI) is documented in detail in [CONTRIBUTING.md](CONTRIBUTING.md); the `cargo +nightly miri test --workspace --all-features` step is required for any PR that adds or modifies `unsafe` code, and the `cargo bench --bench bench -- --baseline current -- --threshold 5` gate ensures no hot-path change regresses by more than 5%.
 
 ---
 
@@ -242,6 +321,9 @@ The project also ships a `Makefile`:
 
 ```bash
 cargo test --all-targets --all-features
+cargo test --doc
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+cargo +nightly miri test --workspace --all-features   # ~10–30 min on first run
 ```
 
 ---
@@ -268,9 +350,7 @@ overflow-checks = true
 
 ## Release
 
-Versions follow [Semantic Versioning](https://semver.org/). Releases are tagged
-via `version:X.Y.Z` commits in [CHANGELOG.md](CHANGELOG.md) and published to
-crates.io via the CI workflow (`release.yml`).
+Versions follow [Semantic Versioning](https://semver.org/). The crate is currently at `0.1.6`; the next release (`0.2.0`) is the SemVer-minor bump that ships the breaking API changes documented in [Migration](#migration-016--020) above. Releases are tagged via `version:X.Y.Z` commits in [CHANGELOG.md](CHANGELOG.md) and published to crates.io via the CI workflow (`release.yml`).
 
 ---
 
@@ -278,31 +358,58 @@ crates.io via the CI workflow (`release.yml`).
 
 | Category | Technology |
 |----------|------------|
-| Language | Rust (2021 edition, 1.70+) |
-| Cryptography | k256 (secp256k1 arithmetic) |
-| Parallelism | rayon (work-stealing) |
-| CLI | clap 4.4 (derive macros) |
-| Error Handling | thiserror, anyhow |
-| Serialization | serde, serde_json |
-| Observability | tracing, tracing-subscriber, tracing-appender |
-| Testing | proptest, criterion, tempfile |
-| CI/CD | GitHub Actions |
+| Language | Rust (2021 edition, **MSRV 1.81**) |
+| Cryptography | k256 0.13 (`arithmetic`, `serde`, `bits`, `pkcs8`) — pure-Rust, audited |
+| Parallelism | rayon 1.8 (work-stealing); `find_map_any` for early-exit |
+| CLI | clap 4.4 (derive) |
+| Error Handling | `thiserror` 2 (library), `anyhow` 1 (binary) |
+| Serialization | serde 1 + serde_json 1 (checkpoint + points.json export) |
+| Observability | `tracing` 0.1 + `tracing-subscriber` 0.3 (`env-filter`) + `tracing-appender` 0.2 |
+| Hot-path encoding | hex 0.4, `k256::elliptic_curve::bigint::U256` (no BigUint) |
+| Hex + big-int (test helpers) | `num-bigint` 0.5 |
+| POSIX (Unix only) | `libc` 0.2 (the one reviewed `unsafe`: `libc::fsync` in `src/persistence.rs`) |
+| Testing | `proptest` 1.11, `criterion` 0.8, `tempfile` 3, `rand` 0.10, `rand_chacha` 0.10, `num-traits` 0.2 |
+| CI/CD | GitHub Actions (Ubuntu + macOS + Windows); `cargo miri` on `ubuntu-latest` is required-for-merge |
 
 ---
+
+## Recently delivered (review-driven pass, commits 1–16)
+
+The following items shipped in commits 1–16 of the `master` branch and are described in detail in their respective commits and ADRs:
+
+- **Removed unsafe from `u256_to_decimal`** (commit 1) — the only `unsafe` in `src/search.rs` is gone.
+- **Tightened `libc::fsync` SAFETY comment** (commit 2) — three-clause self-contained justification.
+- **`Config::validate_pubkey`** + **`FindError::InvalidConfig`** (commit 3) — deep SEC1 fail-fast at session start.
+- **`to_hex_x` ↔ `x_bytes` round-trip regression test** (commit 4).
+- **`to_hex_x` uses `AffineCoordinates::x()` directly** (commit 5) — drops the SEC1 framing round-trip.
+- **`OnceLock<SearchMatch>` replaces `Mutex + AtomicBool`** (commit 6) — see [optimization-decisions/0007](docs/optimization-decisions/0007-oncelock-early-exit.md).
+- **`BatchSize` newtype + `try_with_*` builders** (commit 7a) — the foundation for runtime-sized batches.
+- **Heap-allocated hot-path batch arrays** (commit 7b) — `--batch-size` is finally honoured at runtime; see [ADR-0009](docs/adr/0009-runtime-batch-size.md).
+- **`generate_variants -> &'static [OffsetVariant]`** (commit 7c) — interned metadata; per-session `compute_variant_x_bytes`.
+- **`SweepRange` removed** (commit 8) — dead newtype purged.
+- **Required-for-merge `cargo miri` job** (commit 9) — `.github/workflows/ci.yml::miri`.
+- **Curated `[lints]` section** (commit 10) — pedantic + nursery with a documented allow-list.
+- **`SearchMatch.candidates: [Scalar; 2]`** (commit 12) — breaking; new `candidates_hex()` accessor.
+- **`copy_from_slice` in cached sweep** (commit 13) — drops `try_into + expect`.
+- **ADR-0009, optimization-decision 0007, CHANGELOG rollup, doc refresh** (commit 14).
+- **MSRV 1.70 → 1.81** (commit 16) — enables stable `core::error::Error`.
 
 ## Roadmap
 
 - Profile-guided optimization (PGO) CI integration
-- WebAssembly target (WASI) for browser-based research tooling
-- Formal verification of inverse-chain correctness
-- Extended KAT/differential coverage
+- WebAssembly target (WASI) for browser-based research tooling (`wasm32-unknown-unknown`)
+- Formal verification of `+G` chain correctness and matching invariant
+- Extended KAT/differential coverage (bigger `TEST_SCALARS` set)
+- `secp256r1` / `secp384r1` (RustCrypto `elliptic-curves`) — see [docs/roadmap.md](docs/roadmap.md) for the full list
 
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for fork-and-branch workflow, commit
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the fork-and-branch workflow, commit
 conventions (Conventional Commits), and [Architecture Decision Records](docs/adr/README.md).
+PRs that touch `unsafe` code MUST pass `cargo +nightly miri test --workspace
+--all-features` locally; see [CONTRIBUTING.md#unsafe-code-changes-must-pass-miri](CONTRIBUTING.md).
 
 ## Code of Conduct
 
