@@ -6,15 +6,18 @@ The `find` crate is organized into eight modules with clear responsibility bound
 
 ```
 find/
-├── lib.rs           # Public re-exports
+├── lib.rs           # Crate root; #![warn(missing_docs)] + #![warn(rustdoc::broken_intra_doc_links)]
 ├── main.rs          # CLI binary entry point
-├── config.rs        # Session configuration types (Config, BatchSize newtype, constants)
-├── telemetry.rs     # Tracing initialization helpers
-├── error.rs         # Unified error type
-├── ecc.rs           # Elliptic-curve primitives
-├── search.rs        # Pure search engine domain logic
-├── persistence.rs   # Atomic checkpoints, binary caches, JSON exports
-└── orchestrator.rs  # High-level session management
+├── config.rs        # Config, BatchSize newtype, validation, MAX_BATCH_SIZE, MAX_VARIANT_COUNT
+├── telemetry.rs     # Tracing subscriber + Rayon panic handler
+├── error.rs         # FindError (8 variants) + Result alias
+├── ecc.rs           # SEC1 parsing, point arithmetic, hex conversion, to_hex_x
+├── search.rs        # Pure domain: VariantIndex, OffsetVariant, generate_variants,
+│                   #   compute_variant_x_bytes, perform_chunked_sweep, precompute_chunk,
+│                   #   CacheWriter trait, Progress
+├── persistence.rs   # Checkpoint save/load, FileCacheWriter, perform_cached_sweep,
+│                   #   save_variants_to_json (the only libc::fsync unsafe lives here)
+└── orchestrator.rs  # run(&Config) entry point + checkpoint/lifecycle loop
 ```
 
 ## Module dependency graph
@@ -80,7 +83,7 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 
 | Item | Description |
 |---|---|
-| `FindError` | The unified error enum with seven variants |
+| `FindError` | The unified error enum with eight variants |
 | `Result<T>` | Convenience alias for `std::result::Result<T, FindError>` |
 
 **Variants:**
@@ -90,6 +93,7 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 | `EccError(String)` | Scalar overflow, identity point, or other low-level ECC failure |
 | `ResearchIntegrityError(String)` | Checkpoint X-coordinate anchor mismatch |
 | `InvalidPublicKey(String)` | SEC1 parsing failure (wrong prefix, off-curve, point-at-infinity input) |
+| `InvalidConfig(String)` | Out-of-range `Config::batch_size` / `variant_count` (commits 3 + 7a) |
 | `Io(std::io::Error)` | File-system operation failure |
 | `HexError(hex::FromHexError)` | Hex decoding failure |
 | `SerializationError(serde_json::Error)` | JSON serialization/deserialization failure |
@@ -112,7 +116,7 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 | `hex_to_scalar(&str) -> Result<Scalar>` | Converts a hex string to a `Scalar`, reducing modulo the curve order |
 | `scalar_mul_g(&Scalar) -> ProjectivePoint` | Computes `d·G` via fixed-base scalar multiplication |
 | `subtract(&ProjectivePoint, &ProjectivePoint) -> ProjectivePoint` | Computes `P - Q` in projective coordinates |
-| `to_hex_x(&ProjectivePoint) -> String` | Extracts the 32-byte hex X-coordinate (identity-safe) |
+| `to_hex_x(&ProjectivePoint) -> String` | Extracts the 32-byte hex X-coordinate (identity-safe) via `AffineCoordinates::x()` directly (commit 5 — drops the `to_encoded_point` + `EncodedPoint::x()` round-trip) |
 
 **Why a wrapper?** The `k256` API uses compressed `PublicKey` and `EncodedPoint` types; the search engine needs `ProjectivePoint` directly. The wrapper centralizes the conversion and adds the search-specific error reporting.
 
@@ -128,9 +132,9 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 
 | Item | Description |
 |---|---|
-| `OffsetVariant` | A single shift variant: label, scalar offset `V`, and 32-byte X-coordinate of `P - V·G` |
-| `VariantIndex` | Cache-optimized lookup index (flat sorted array of variants) |
-| `SearchMatch` | The result of a successful match (variant label, `j`, candidates) |
+| `OffsetVariant` | A single shift variant: label (`"2^i"` or `"sum(2^0..2^i)"`), scalar offset `v_scalar: Scalar`, decimal offset string. Does **not** carry an X-coordinate (commit 7c) — the target-specific X-coordinates live in the parallel array from `compute_variant_x_bytes`. |
+| `VariantIndex` | Cache-optimized lookup index: a sorted `Vec<[u8; 32]>` of X-coordinates + a `Vec<usize>` permutation + a `&'static [OffsetVariant]` slice borrowed from the interned metadata + a per-session `Vec<[u8; 32]>` of target-specific keys |
+| `SearchMatch` | The result of a successful match (variant label, offset string, small scalar `j`, `candidates: [Scalar; 2]`) |
 | `Progress` | Thread-safe `AtomicU64` counter for telemetry |
 
 ### Traits
@@ -143,9 +147,9 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 
 | Item | Description |
 |---|---|
-| `generate_variants(&ProjectivePoint) -> &'static [OffsetVariant]` | Returns the static 512-variant metadata (label/scalar/decimal-offset) from the per-process `OnceLock` |
-| `compute_variant_x_bytes(&ProjectivePoint) -> Vec<[u8; 32]>` | Computes the 512 target-specific X-coordinates; pairs with `generate_variants` |
-| `perform_chunked_sweep(&VariantIndex, start, end, batch_size) -> Option<SearchMatch>` | CPU-bound parallel sweep with batch normalization |
+| `generate_variants(&ProjectivePoint) -> &'static [OffsetVariant]` | Returns a `'static` slice of the 512-variant metadata (label / scalar / decimal-offset) from a process-wide `OnceLock` (commit 7c) |
+| `compute_variant_x_bytes(&ProjectivePoint) -> Vec<[u8; 32]>` | Computes the target-specific X-coordinates (per-session arithmetic); pairs with `generate_variants` to build a `VariantIndex` |
+| `perform_chunked_sweep(&VariantIndex, start, end, batch_size) -> Option<SearchMatch>` | CPU-bound parallel sweep; honours `batch_size` from `Config::batch_size` (commit 7b) |
 | `precompute_chunk(start, end, &W, Option<&VariantIndex>, &Progress, batch_size) -> Result<Option<SearchMatch>>` | Pre-computes a binary cache chunk while optionally searching for a match |
 
 **Performance notes:**
@@ -194,8 +198,12 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 
 | Item | Description |
 |---|---|
-| `Config` | Configuration required to drive a search session (pubkey, output dir, cache flag) |
-| `Config::validate() -> Result<()>` | Validates that all required fields are non-empty and well-formed |
+| `Config` | Configuration required to drive a search session (pubkey, output dir, cache flag, `BatchSize`, `variant_count`) |
+| `Config::validate() -> Result<()>` | Shallow validation: pubkey non-empty / not whitespace-only |
+| `Config::validate_pubkey() -> Result<()>` | Deep validation: pubkey parses as a SEC1 point via `ecc::parse_pubkey` (commit 3) |
+| `Config::try_with_batch_size(u32) -> Result<Self, FindError>` | Fallible batch-size setter; raises `InvalidConfig` on out-of-range (commit 7a) |
+| `Config::try_with_variant_count(u32) -> Result<Self, FindError>` | Fallible variant-count setter; raises `InvalidConfig` on out-of-range (commit 7a) |
+| `Config::with_batch_size` / `with_variant_count` (deprecated) | Panicking setters retained for backward compat; marked `#[deprecated(note = "use try_with_* for fallible construction")]` |
 | `run(&Config) -> Result<Option<SearchMatch>>` | Runs a complete search session with automatic checkpoint/resume |
 
 **Internal constants:**
@@ -209,12 +217,12 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 
 **Lifecycle (per `run` invocation):**
 
-1. Validate configuration.
-2. Parse the target public key.
-3. Generate 512 variants and persist their metadata to `points.json`.
-4. Build the variant index.
+1. Validate the configuration (`Config::validate` shallow + `Config::validate_pubkey` deep).
+2. Parse the target public key through `ecc::parse_pubkey`.
+3. Get the static 512-variant metadata via `generate_variants` (interned `OnceLock`) and the target-specific X-coordinates via `compute_variant_x_bytes`. Persist both to `points.json`.
+4. Build the `VariantIndex` from the static metadata + per-session X-coords.
 5. Load any existing checkpoint; verify its integrity anchor.
-6. Loop over chunks of `CACHE_CHUNK_SIZE`:
+6. Loop over chunks of `DEFAULT_CACHE_CHUNK_SIZE`:
    - If a cache file exists for this chunk → perform an I/O-bound sweep.
    - Else if `cache_points` is set → precompute the cache and then sweep.
    - Else → perform a CPU-bound parallel sweep.
@@ -238,7 +246,18 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 
 ## Internal helpers
 
-The `search` module exposes a small number of `pub(crate)` helpers (`affine_x_bytes`, `scalar_to_hex_trimmed`, `u256_to_decimal`) that are used by tests but not by library consumers. The `MAX_BATCH` constant (`32`) is a `pub(crate)` const, not a public item.
+The `search` module exposes a small number of `pub(crate)` helpers (`affine_x_bytes`,
+`scalar_to_hex_trimmed`, `u256_to_decimal`) that are used by tests but not by library
+consumers. The `BATCH_SIZE` constant (`32`) is a `pub` const retained for
+benchmark / documentation use; the **runtime-controlling** value is
+`Config::batch_size` of type `BatchSize` (commit 7a). The hot-path arrays
+(`Vec<ProjectivePoint>`, `Vec<AffinePoint>`, `Vec<u8>`) are heap-allocated
+and sized against `batch_size` at runtime (commit 7b; see
+[ADR-0009](adr/0009-runtime-batch-size.md)).
+
+`pub const MAX_BATCH: usize = 32` (and its companion compile-time
+constant `BATCH_SIZE`) was removed in commit 7b; the compile-time
+batched-array ceiling is gone.
 
 ## Extension points
 

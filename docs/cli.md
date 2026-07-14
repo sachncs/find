@@ -10,14 +10,23 @@ find [OPTIONS] --pubkey <HEX_SEC1>
 
 ## Flags
 
-| Flag | Short | Type | Default | Description |
-|---|---|---|---|---|
-| `--pubkey` | `-p` | `String` (required) | — | HEX-encoded SEC1 public key (compressed or uncompressed) |
-| `--output-dir` | `-o` | `String` | `data` | Data and checkpoint root directory |
-| `--log-dir` | `-l` | `String` | `logs` | Rolling log directory |
-| `--cache-points` | `-c` | `bool` | `false` | Persist `j·G` X-coordinates to binary caches for multi-pubkey reuse |
-| `--help` | `-h` | — | — | Print help |
-| `--version` | `-V` | — | — | Print version |
+| Flag | Short | Type | Default | Range | Description |
+|---|---|---|---|---|---|
+| `--pubkey` | `-p` | `String` (required) | — | — | HEX-encoded SEC1 public key (compressed or uncompressed) |
+| `--output-dir` | `-o` | `String` | `data` | — | Data and checkpoint root directory |
+| `--log-dir` | `-l` | `String` | `logs` | — | Rolling log directory |
+| `--cache-points` | `-c` | `bool` | `false` | — | Persist `j·G` X-coordinates to binary caches for multi-pubkey reuse |
+| `--batch-size` | `-b` | `u32` | `32` | `1..=256` | Points per Montgomery batch normalization; honoured at runtime (commit 7b). Out-of-range values produce `FindError::InvalidConfig` and exit non-zero. |
+| `--variants` | `-V` | `u32` | `512` | `1..=512` | Powers-of-two + cumulative-sum variant count. Out-of-range values produce `FindError::InvalidConfig` and exit non-zero. |
+| `--help` | `-h` | — | — | — | Print help |
+| `--version` | `-V` | — | — | — | Print version |
+
+The two runtime tunables (`--batch-size`, `--variants`) flow through
+`Config::try_with_batch_size` / `Config::try_with_variant_count`
+(commit 7a). The panicking `Config::with_batch_size` /
+`Config::with_variant_count` builders that the binary used to call are
+now `#[deprecated]`; the CLI wrapper has been switched to the fallible
+builders as of commit 7a.
 
 ## Examples
 
@@ -76,7 +85,7 @@ The `--pubkey` value must be a valid hex-encoded SEC1 point:
 
 Hex digits may be upper- or lower-case. The string is passed directly to `k256::PublicKey::from_sec1_bytes` after hex decoding.
 
-Empty or malformed input produces a [`FindError::InvalidPublicKey`](modules.md#error) or [`FindError::HexError`](modules.md#error) and the binary exits with a non-zero status.
+Empty or malformed input produces a [`FindError::InvalidPublicKey`](modules.md#error) or [`FindError::HexError`](modules.md#error) and the binary exits with a non-zero status. Out-of-range `--batch-size` or `--variants` produces a [`FindError::InvalidConfig`](modules.md#error).
 
 ## Output
 
@@ -99,10 +108,10 @@ Total Search Duration: 2.345s
 | `Variant` | The variant label that produced the match (e.g. `"2^10"`, `"sum(2^0..2^7)"`) |
 | `Shift scalar V` | The original unreduced offset value (decimal) |
 | `Search scalar j` | The small scalar that matched the X-coordinate |
-| `Target candidates` | The two possible private keys, hex-encoded (V+j and V-j, both reduced mod n) |
+| `Target candidates` | The two possible private keys, hex-encoded via `m.candidates_hex()` (V+j and V-j, both reduced mod n) |
 | `Total Search Duration` | Wall-clock time of the entire search session |
 
-The two candidates are emitted because X-coordinate matching cannot distinguish the Y-parity of `P - V·G`. The caller must verify each candidate externally (e.g. by checking `candidate·G = P`) to determine the correct one.
+The two candidates are emitted because X-coordinate matching cannot distinguish the Y-parity of `P - V·G`. Since commit 12 the `SearchMatch` struct holds them as `[k256::Scalar; 2]` (the `m.candidates` field); the CLI's `render_success_report` formats them via the `candidates_hex()` accessor. Callers must verify each candidate externally (e.g. by checking `candidate·G = P`) to determine the correct one.
 
 ### On completion (no match)
 
@@ -127,6 +136,7 @@ The exit status is non-zero. The specific [`FindError`](modules.md#error) varian
 | `EccError` | `ECC error: ...` |
 | `ResearchIntegrityError` | `Research integrity violation: ...` |
 | `InvalidPublicKey` | `Invalid public key format: ...` |
+| `InvalidConfig` | `Invalid configuration: ...` |
 | `Io` | `I/O error: ...` |
 | `HexError` | `Hex decoding error: ...` |
 | `SerializationError` | `Serialization error: ...` |
