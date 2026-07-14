@@ -143,15 +143,17 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 
 | Item | Description |
 |---|---|
-| `generate_variants(&ProjectivePoint) -> Vec<OffsetVariant>` | Constructs the 512-variant set from a target public key |
-| `perform_chunked_sweep(&VariantIndex, start, end) -> Option<SearchMatch>` | CPU-bound parallel sweep with batch normalization |
-| `precompute_chunk(start, end, &W, Option<&VariantIndex>, &Progress) -> Result<Option<SearchMatch>>` | Pre-computes a binary cache chunk while optionally searching for a match |
+| `generate_variants(&ProjectivePoint) -> &'static [OffsetVariant]` | Returns the static 512-variant metadata (label/scalar/decimal-offset) from the per-process `OnceLock` |
+| `compute_variant_x_bytes(&ProjectivePoint) -> Vec<[u8; 32]>` | Computes the 512 target-specific X-coordinates; pairs with `generate_variants` |
+| `perform_chunked_sweep(&VariantIndex, start, end, batch_size) -> Option<SearchMatch>` | CPU-bound parallel sweep with batch normalization |
+| `precompute_chunk(start, end, &W, Option<&VariantIndex>, &Progress, batch_size) -> Result<Option<SearchMatch>>` | Pre-computes a binary cache chunk while optionally searching for a match |
 
 **Performance notes:**
 
 - `perform_chunked_sweep` uses `rayon::find_map_any` for early-exit on the first match.
-- `precompute_chunk` uses a `Mutex<Option<SearchMatch>>` for cross-batch coordination and tolerates worker panics (lock poisoning is recovered via `into_inner`).
-- The hot-path arrays are stack-allocated (`[ProjectivePoint; 32]`) for predictable memory behavior.
+- `precompute_chunk` uses a `OnceLock<SearchMatch>` for cross-batch coordination; worker panics cannot corrupt the result because there is no lock.
+- The hot-path arrays are heap-allocated (`Vec<ProjectivePoint>`, `Vec<AffinePoint>`, `Vec<u8>`) and sized at runtime against `Config::batch_size`.
+- `generate_variants` returns `&'static [OffsetVariant]` interned via `OnceLock<Box<[OffsetVariant; 512]>>`; the per-session X-coordinates come from `compute_variant_x_bytes`.
 
 ## `persistence` — atomic checkpoints, caches, JSON
 

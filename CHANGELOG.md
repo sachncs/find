@@ -10,8 +10,80 @@ commit and its commit timestamp.
 
 ## [Unreleased]
 
+### Added
+
+- **Deep pubkey validation**: `Config::validate_pubkey` fails fast on
+  malformed SEC1 inputs (commit 3). The orchestrator now calls both
+  `validate()` (shallow) and `validate_pubkey()` (deep / `ecc::parse_pubkey`)
+  at startup.
+- **Round-trip regression test**: `kat_to_hex_x_matches_x_bytes_hex`
+  (fixed `d in 1..=1000`) + the `prop_to_hex_x_equals_x_bytes_hex`
+  proptest (100 cases) in `tests/kat.rs` pin down the contract between
+  `to_hex_x` and `x_bytes` (commit 4).
+- **`BatchSize(u32)` newtype** in `src/config.rs` enforces the legal range
+  at construction time; `Config::try_with_batch_size` /
+  `try_with_variant_count` now return `Result<Self, FindError>` (commit
+  7a). The legacy `with_batch_size` / `with_variant_count` builders are
+  retained and `#[deprecated]`.
+- **Runtime-sized hot-path batch arrays** in `perform_chunked_sweep` and
+  `precompute_chunk`: `Vec<ProjectivePoint>`, `Vec<AffinePoint>`,
+  `Vec<u8>` sized by `Config::batch_size`. Replaces the
+  `[ProjectivePoint; MAX_BATCH]` stack arrays so the documented
+  `--batch-size 1..=256` range is now actually honoured at runtime
+  (commit 7b). New `prop_batch_size_runtime` proptest verifies the
+  contract.
+- **Interned static variant metadata**: `generate_variants` now returns
+  `&'static [OffsetVariant]` from a
+  `OnceLock<Box<[OffsetVariant; 512]>>`. The 256 pow + 256 sum labels,
+  scalars, and decimal offsets are built once per process; only the
+  target-specific X-coordinates remain a per-session
+  `Vec<[u8; 32]>` produced by the new `compute_variant_x_bytes`
+  function (commit 7c).
+- **CI: required-for-merge `cargo miri` job** in
+  `.github/workflows/ci.yml` runs `cargo +nightly miri test --workspace
+  --all-features` on every PR (commit 9).
+- **`[lints]` section** in `Cargo.toml` enables the curated `pedantic`
+  + `nursery` clippy sets with a project-specific allow-list
+  (commit 10). The `-D warnings` gate is the new local pre-commit bar.
+- **ADR-0009** (`docs/adr/0009-runtime-batch-size.md`) documents the
+  trade-off between compile-time-fixed and runtime-sized batch arrays
+  (commit 14).
+- **`optimization-decisions/0007-oncelock-early-exit.md`** explains why
+  `OnceLock<SearchMatch>` replaced the `Mutex + AtomicBool` pair in
+  `precompute_chunk` (commit 14).
+
 ### Changed
-- Project metadata: author normalized to `Sachin <sachncs@gmail.com>` in
+
+- **Unsafe removed from `u256_to_decimal`**: `String::from_utf8(digits)` now
+  validates the ASCII digit byte-slice instead of the previous
+  `unsafe { String::from_utf8_unchecked(digits) }` (commit 1). `src/search.rs`
+  has zero application-level `unsafe` after this commit.
+- **`libc::fsync` SAFETY comment tightened**: sits directly above the
+  `unsafe` block with three explicit justification clauses (descriptor
+  validity, `libc::fsync` soundness, intentional `Result` discard —
+  commit 2).
+- **`to_hex_x` uses `AffineCoordinates::x()` directly** instead of
+  routing through `to_encoded_point(false) + EncodedPoint::x()`. The
+  `k256::elliptic_curve::sec1::ToEncodedPoint` import is removed from
+  `ecc.rs` (commit 5).
+- **`precompute_chunk` uses `OnceLock<SearchMatch>`** instead of the
+  `Mutex<Option<SearchMatch>> + AtomicBool` pair (commit 6).
+  `use std::sync::Mutex` is removed from `src/search.rs`. Worker panics
+  can no longer corrupt the result because there is no lock to poison.
+- **`SearchMatch.candidates` is `[Scalar; 2]`** (breaking — commit 12).
+  Was `[String; 2]`. The hex representation is now produced lazily by
+  the new `SearchMatch::candidates_hex() -> [String; 2]` accessor.
+  `SearchMatch::candidates_as_scalars()` now returns `[Scalar; 2]`
+  directly (no decoding round-trip needed). External code that did
+  `m.candidates.contains(&"3".to_string())` migrates to
+  `m.candidates.contains(&k256::Scalar::from(3u64))`.
+- **`perform_cached_sweep` uses `copy_from_slice`** instead of
+  `try_into().expect(…)` for the per-batch 32-byte chunk (commit 13).
+- **`src/lib.rs`, `src/orchestrator.rs`, `src/search.rs`, `src/persistence.rs`,
+  `src/config.rs`, `docs/architecture.md`, `docs/algorithms.md`,
+  `docs/modules.md`, `docs/performance.md`, `CONTRIBUTING.md`** all
+  refreshed to reflect the new APIs (commit 14).
+- **Project metadata**: author normalized to `Sachin <sachncs@gmail.com>` in
   `Cargo.toml`.
 - `LICENSE-MIT` copyright line updated to
   `Copyright (c) 2026 Sachin <sachncs@gmail.com>`.
@@ -19,6 +91,29 @@ commit and its commit timestamp.
 - `HARDENING_REPORT.md` removed (superseded by `docs/security.md` plus inline
   module-level security notes).
 - Repository URLs already canonicalized to `sachncs/find` (commit `4c45e2e`).
+
+### Removed
+
+- **`SweepRange` newtype** (commit 8). The unused `SweepRange` /
+  `SweepRange::new` / `SweepRange::len` / `SweepRange::is_empty` API and
+  its 3 unit tests were deleted from `src/config.rs`; the
+  `orchestrator::SweepRange` re-export was removed.
+- `pub const search::MAX_BATCH: usize = 32` removed from the crate
+  surface (commit 7b). The constant was redundant once the hot-path
+  arrays moved to heap allocation.
+
+### Migration notes (0.1.6 → next)
+
+- `search::SearchMatch::candidates` field type changed; see commit 12.
+- `search::perform_chunked_sweep` and `search::precompute_chunk` gained
+  a trailing `batch_size: u32` parameter; see commit 7b.
+- `search::VariantIndex::new` now takes `(&'static [OffsetVariant], &[[u8; 32]])`
+  instead of `Vec<OffsetVariant>`; see commit 7c. `generate_variants`
+  no longer returns the X-coordinates; call `compute_variant_x_bytes`
+  separately.
+- `config::SweepRange` is gone; use the raw `start` and `end` `u64`
+  scalars with the orchestrator's `DEFAULT_CACHE_CHUNK_SIZE` boundary
+  instead.
 
 ## [0.1.6] - 2026-06-26 — `1753ab2`
 

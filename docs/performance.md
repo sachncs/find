@@ -132,6 +132,8 @@ The hot loop in `precompute_chunk` / `perform_chunked_sweep` spends its cycles a
 
 The dominant cost is the **bootstrap scalar multiplication** in step 1, not the `+G` chain. For a typical 32-point batch the bootstrap takes ~80% of the time; the chain + normalize + match together take the remaining 20%. This means increasing `BATCH_SIZE` beyond ~64 has diminishing returns — the per-batch cost is dominated by the single bootstrap mul, not by the per-point chain.
 
+The batch-size choice now trades against per-batch allocation cost (heap-allocated `Vec<ProjectivePoint>` / `Vec<AffinePoint>` / `Vec<u8>` arrays track the runtime `Config::batch_size`); see [ADR-0009](adr/0009-runtime-batch-size.md).
+
 ## Optimization decisions
 
 See [optimization-decisions/](optimization-decisions/) for the rationale behind each optimization in the current implementation:
@@ -142,6 +144,7 @@ See [optimization-decisions/](optimization-decisions/) for the rationale behind 
 - `0004-atomic-flag-early-exit.md` — replacing per-batch `Mutex::lock` with an `AtomicBool` fast-path
 - `0005-cached-sweep-stack-buffer.md` — `perform_cached_sweep` over a 32 KiB stack scratch buffer
 - `0006-u256-decimal-no-biguint.md` — direct 256-bit divmod-by-10 instead of `BigUint::to_string`
+- `0007-oncelock-early-exit.md` — replacing `Mutex + AtomicBool` with a single `OnceLock<SearchMatch>`
 
 ## Profiling
 

@@ -19,12 +19,14 @@ The runtime memory footprint, by layer:
 | Component | Stack | Heap | Notes |
 |---|---|---|---|
 | `search::pow_of_two_g` | 256 × 96 B ≈ 24 KiB | — | Stack-allocated point-doubling table |
-| `search::points[batch]` | 32 × 96 B ≈ 3 KiB | — | Stack-allocated hot-path batch |
-| `search::affines[batch]` | 32 × 96 B ≈ 3 KiB | — | Stack-allocated post-normalization |
-| `search::block[32×32]` | 1 KiB | — | Stack-allocated cache write block |
+| `search::pow_of_two_g` | 256 × 96 B ≈ 24 KiB | — | Stack-allocated point-doubling table |
+| `search::points[batch]` | `batch_size` × 96 B | — | Heap-allocated hot-path batch (commit 7b) |
+| `search::affines[batch]` | `batch_size` × 96 B | — | Heap-allocated post-normalization (commit 7b) |
+| `search::block[batch×32]` | `batch_size × 32` B | — | Heap-allocated cache write block |
 | `search::VariantIndex::keys` | — | 16 KiB | L1-resident X-coords (Vec<[u8; 32]>) |
 | `search::VariantIndex::order` | — | 4 KiB | Cold permutation (Vec<usize>) |
-| `search::VariantIndex::variants` | — | ~48 KiB | Cold variant metadata |
+| `search::VariantIndex::variants` | — | static | `&'static [OffsetVariant]` from interned `OnceLock` |
+| `search::VariantIndex::x_bytes` | — | 16 KiB | Per-session target-specific keys |
 | `persistence::BufReader` | — | 8 KiB default | I/O scratch (only used in cached path) |
 | Total | ~32 KiB / worker | ~76 KiB / session | Heap usage dominated by 512-variant set |
 
@@ -174,15 +176,15 @@ sequenceDiagram
 
 **`precompute_chunk` cross-batch coordination:**
 
-`precompute_chunk` uses a `Mutex<Option<SearchMatch>>` shared across batches. Each batch:
+`precompute_chunk` uses a `OnceLock<SearchMatch>` shared across batches (replacing the previous `Mutex<Option<SearchMatch>>` + `AtomicBool` pair — see [optimization-decisions/0007](../optimization-decisions/0007-oncelock-early-exit.md)). Each batch:
 
-1. Locks the mutex and checks whether another batch has already found a match.
+1. Reads the `OnceLock` (lock-free) to check whether another batch has already published a match.
 2. If yes, returns immediately (no work done).
 3. If no, processes the batch and writes the X-coordinates via the `CacheWriter`.
-4. If a match is discovered, locks the mutex and stores the match.
-5. The orchestrator's outer loop then sees the match and terminates.
+4. If a match is discovered, publishes it via `OnceLock::set`; later workers' `set` calls are no-ops.
+5. The orchestrator's outer loop then extracts the published match via `OnceLock::into_inner`.
 
-The mutex is unlocked after the early-exit check to minimize contention. Worker panics are tolerated: the final `into_inner()` call on a poisoned mutex logs a warning and returns whatever value was stored.
+Because `OnceLock` has no mutex, no poisoning recovery is needed — there is no lock for a panicked worker to corrupt.
 
 ### 4. Persistence layer (`persistence.rs`)
 
@@ -383,7 +385,8 @@ graph TD
 | Primitive | Location | Purpose |
 |---|---|---|
 | `AtomicU64` (Relaxed) | `search::Progress` | Telemetry counter; relaxed ordering is sufficient because the value is informational |
-| `Mutex<Option<SearchMatch>>` | `search::precompute_chunk` | Cross-batch early-exit coordination |
+| `OnceLock<SearchMatch>` | `search::precompute_chunk` | Cross-batch one-shot match publication (replaces Mutex+AtomicBool pair from 0.1.6) |
+| `OnceLock<Box<[OffsetVariant; 512]>>` | `search::generate_variants` | Per-process interning of the 512-entry variant metadata (replaces 512 allocations per session) |
 | `Mutex<File>` | `persistence::FileCacheWriter` (non-Unix only) | Serializes `seek + write_all` on platforms without `pwrite_at` |
 | `tracing` non-blocking writer | `main::init_tracing` | Decouples log I/O from the CPU path |
 
@@ -391,7 +394,7 @@ graph TD
 
 `rayon::find_map_any` provides a clean early-exit: when any worker returns `Some(_)`, the remaining workers' batches are abandoned and the result is returned. The behavior is documented in the [`rayon` documentation](https://docs.rs/rayon).
 
-The custom panic handler in `main.rs` allows a worker panic to be recovered: the panic is logged, and the search continues with the remaining workers. The `Mutex::into_inner()` pattern in `precompute_chunk` extracts the match from a potentially poisoned lock.
+The custom panic handler in `main.rs` allows a worker panic to be recovered: the panic is logged, and the search continues with the remaining workers. `precompute_chunk` uses `OnceLock` so there is no mutex to poison.
 
 ## Persistence architecture
 
@@ -435,7 +438,7 @@ If verification fails, the process exits with `ResearchIntegrityError`. The user
 
 See [security.md](security.md) for the full security model. The architecture-level points:
 
-- **One reviewed `unsafe` call** in application code (`libc::fsync` in `persistence.rs`); no other application-code `unsafe`.
+- **One reviewed `unsafe` call** in application code (`libc::fsync` in `persistence.rs`); no other application-code `unsafe`. This was the case at 0.1.6 and remains true after commits 1 and 6: `u256_to_decimal` lost its `unsafe { String::from_utf8_unchecked }` block, and `precompute_chunk` migrated off `Mutex<Option<SearchMatch>>` + `AtomicBool`.
 - **Atomic state persistence** via write-then-rename and parent-directory `fsync`.
 - **Input validation** at the boundary (`parse_pubkey`).
 - **No network I/O** — the tool does not require or use the network.

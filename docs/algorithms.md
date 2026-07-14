@@ -291,25 +291,26 @@ The cached path is **I/O-bound**, not compute-bound. It does not perform any mod
 ### Precomputation path
 
 ```text
-function precompute_chunk(start, end, writer, index, progress):
-    // (Conceptual; actual code uses Rayon par_iter with try_for_each
-    //  and a shared Mutex<Option<SearchMatch>> for cross-batch early-exit.)
-    for each batch in [start, end] in chunks of 32:
-        if shared_match is Some: return
+function precompute_chunk(start, end, writer, index, progress, batch_size):
+    // Conceptual; actual code uses Rayon par_iter with try_for_each
+    // and a shared OnceLock<SearchMatch> for cross-batch early-exit
+    // (replaced the previous Mutex+AtomicBool pair; see
+    // optimization-decisions/0007-oncelock-early-exit.md).
+    for each batch in [start, end] in chunks of batch_size:
+        if match_once.get() is Some: return
 
         points = +G chain
         affines = batch_normalize(points)
-        block = encode(affines)         // 32 × 32 bytes
+        block = encode(affines)         // batch_size × 32 bytes
         for (i, affine) in affines:
             if let Some(match) = index.match_x(affine, j):
-                shared_match = Some(match)
-                return
+                let _ = match_once.set(match); return
 
         writer.write_block(batch_offset, &block)
-        progress.add(32)
+        progress.add(batch_size)
 ```
 
-The actual implementation uses `rayon::into_par_iter().try_for_each` for parallelism. The `shared_match` is a `Mutex<Option<SearchMatch>>` that workers check before processing each batch.
+The actual implementation uses `rayon::into_par_iter().try_for_each` for parallelism. The `match_once` is a `OnceLock<SearchMatch>` that workers check (lock-free) before processing each batch.
 
 ## Complexity analysis
 

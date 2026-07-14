@@ -129,7 +129,7 @@ pub const VARIANT_COUNT: usize = 512;
 ///   deterministic** from the variant index alone (they depend only on the
 ///   offset scalar `V`, not on the target public key). The full set of
 ///   512 variants is built once per process via
-///   [`static_variants`] and shared across all sessions.
+///   [`generate_variants`] and shared across all sessions.
 /// - The 32-byte X-coordinate of \(P - V \cdot G\) is *target-dependent*
 ///   and is computed per-call by
 ///   [`crate::search::compute_variant_x_bytes`] (or by the caller via
