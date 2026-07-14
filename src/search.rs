@@ -595,6 +595,11 @@ pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
         pow_of_two_g[i] = pow_of_two_g[i - 1].double();
     }
 
+    // Pre-computed labels: built once, cached via OnceLock for the process
+    // lifetime. Avoids 512 `format!` allocations per `generate_variants`
+    // call (the variant labels are deterministic across sessions).
+    let (pow_labels, sum_labels) = variant_labels();
+
     let mut pow = U256::ONE;
     for (i, pow_g) in pow_of_two_g.iter().enumerate() {
         // `Scalar::reduce` is constant-time reduction mod n. For all i < 256
@@ -604,7 +609,7 @@ pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
         let shifted = p - pow_g;
         if let Some(x) = affine_x_bytes(&shifted.to_affine()) {
             variants.push(OffsetVariant {
-                label: format!("2^{}", i),
+                label: pow_labels[i].clone(),
                 v_scalar: scalar,
                 x_bytes: x,
                 offset: u256_to_decimal(&pow),
@@ -629,7 +634,7 @@ pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
         let shifted = p - cum_g;
         if let Some(x) = affine_x_bytes(&shifted.to_affine()) {
             variants.push(OffsetVariant {
-                label: format!("sum(2^0..2^{})", i),
+                label: sum_labels[i].clone(),
                 v_scalar: scalar,
                 x_bytes: x,
                 offset: u256_to_decimal(&cum),
@@ -721,6 +726,47 @@ pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
 ///     Ok(())
 /// }
 /// ```
+///
+/// Returns the pre-computed human-readable labels for the powers-of-two
+/// and cumulative-sum variants.
+///
+/// The labels are generated once per process via [`std::sync::OnceLock`]
+/// the first time `generate_variants` runs; subsequent sessions reuse the
+/// same allocations. Avoids 512 `format!` allocations per
+/// `generate_variants` call (the variant labels are deterministic across
+/// sessions and depend only on the index `i`).
+///
+/// The two arrays hold:
+/// - `pow_labels[i]` = `"2^{i}"`
+/// - `sum_labels[i]` = `"sum(2^0..2^{i})"`
+fn variant_labels() -> &'static ([String; 256], [String; 256]) {
+    use std::sync::OnceLock;
+    static LABELS: OnceLock<([String; 256], [String; 256])> = OnceLock::new();
+    LABELS.get_or_init(|| {
+        let pow: [String; 256] = std::array::from_fn(|i| format!("2^{}", i));
+        let sum: [String; 256] = std::array::from_fn(|i| format!("sum(2^0..2^{})", i));
+        (pow, sum)
+    })
+}
+
+/// Performs a CPU-bound parallel sweep over a scalar range.
+///
+/// The range `[start, end]` is split into batches of 32 scalars. Each batch
+/// is processed in parallel using Rayon, and points are batch-normalized to
+/// amortize the cost of modular inversion.
+///
+/// # Arguments
+///
+/// * `index` — The variant index to match against.
+/// * `start` — First scalar \(j\) to evaluate (inclusive). Values below 1 are
+///   clamped to 1 because \(j = 0\) yields the identity point, which cannot
+///   match a valid variant.
+/// * `end` — Last scalar \(j\) to evaluate (inclusive).
+///
+/// # Returns
+///
+/// `Some(SearchMatch)` on the first match found, or `None` if the entire
+/// range is exhausted without a match.
 pub fn perform_chunked_sweep(index: &VariantIndex, start: u64, end: u64) -> Option<SearchMatch> {
     let start = start.max(1);
     if start > end {
