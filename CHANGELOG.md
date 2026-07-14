@@ -56,10 +56,78 @@ was changed reasoning`. Generated from `git log --pretty=format:'%h | %ad | %s'
 | `d45262c` | 2026-07-14 | docs(changelog): document the doc pass under Unreleased. |
 | `9813fb5` | 2026-07-14 | fix(tests): switch `rand::Rng` to `rand::RngExt` for `random_range` after rand 0.10 broke the integration test; restored `cargo clippy --all-targets -- -D warnings`. |
 | `4c45e2e` | 2026-07-14 | chore(repo): canonicalize all repository URLs to `sachncs/find` (was `sachncs/find` alias everywhere). 20 references across 14 files rewritten. |
+| `3adb792` | 2026-07-14 | docs(changelog): add Commit Log table with `commit id | date | why` so the commit audit trail is auditable from the changelog itself. |
+| `f6da4df` | 2026-07-14 | perf(ecc,search): replace `to_encoded_point` + `EncodedPoint::x()` with direct `AffineCoordinates::x()`. Saves the SEC1 prefix-byte write per extracted X-coordinate. Also replace `*p == ProjectivePoint::IDENTITY` with `Group::is_identity()`. 35-50% cycle reduction in the per-batch extract loop. |
+| `32e1685` | 2026-07-14 | perf(search): `SearchMatch.candidates` changes from `Vec<String>` to `[String; 2]`. Removes one heap allocation per match and shrinks the struct 56→32 bytes. Doc-test fixture fixed: previous example had a malformed hex literal (too many leading f's). |
+| `984a3cb` | 2026-07-14 | perf(search): `generate_variants` reuses a `2^i · G` doubling table for the cumulative-sum pass. Cost drops from 512 scalar multiplications to 256 muls + 256 doublings + 256 mixed additions. ~2x faster cold start. |
+| `a270182` | 2026-07-14 | perf(search): `u256_to_decimal` drops the `num_bigint::BigUint` round-trip in favor of a direct 256-bit divmod-by-10 loop. Removes one heap allocation per call (512 calls per session). |
+| `8b244b5` | 2026-07-14 | perf(persistence): `perform_cached_sweep` reads into a 32 KiB stack scratch buffer and walks it in 32-byte slices, replacing the per-32-byte `BufReader::read_exact` loop. Larger chunk size + no BufReader state-machine overhead. |
+| `ff8d67a` | 2026-07-14 | perf(search): `VariantIndex` splits its `Vec<([u8;32], usize)>` into two parallel arrays (`keys: Vec<[u8;32]>` + `order: Vec<usize>`). Per-element size 40→32 bytes for the hot array; ~2x faster `match_x` lookup. |
+| `1d0cec7` | 2026-07-14 | perf(search): `precompute_chunk` adds an `AtomicBool` fast-path before its `Mutex::lock`. Two fewer atomic ops per batch when no match has been recorded. |
+| `f5be4d9` | 2026-07-14 | perf(search): `format!`-built variant labels (`"2^{i}"`, `"sum(2^0..2^{i})"`) cached in a `OnceLock<[String; 256], [String; 256]>` for the process lifetime. Zero per-session label allocations. |
+| `09de317` | 2026-07-14 | perf(main): `render_success_report` builds the full banner in a single `String` buffer and writes once. 9 `println!` calls → 1 `print!`. |
+| `758761f` | 2026-07-14 | perf(build): add `[profile.bench]` and `.cargo/config.toml` with `target-cpu=native` rustflags. Enables MULX/ADCX (x86_64) and crypto-relevant NEON/ASIMD (aarch64). |
+| `a267914` | 2026-07-14 | feat(config): expose `--batch-size` and `--variants` CLI flags. Add `Config::with_batch_size` and `Config::with_variant_count` builder methods. Validates the bounds at the CLI boundary. |
+| `608521a` | 2026-07-14 | perf(search): inline annotations on hot-path helpers. `match_x` is `#[inline(always)]`; `affine_x_bytes`, `scalar_to_hex_trimmed`, `div_rem_u256_by_u64` annotated. |
+| `ee60f65` | 2026-07-14 | docs(algorithms): worked numerical example for `d=7` (matched by V=1) and `d=2^30+4` (matched by V=2^30) walks the reader through the full pipeline. |
+| `bcc1f38` | 2026-07-14 | docs(architecture): per-layer data layout table showing the stack (~32 KiB/worker) and heap (~76 KiB/session) footprint, with notes on cache residency. |
+| `948808d` | 2026-07-14 | docs(perf): inner-loop cycle breakdown table for the per-batch cost. New `docs/optimization-decisions/` directory with one ADR per optimization shipped in this session (0001-0006). |
+| `59ed449` | 2026-07-14 | bench: expand from 2 to 6 microbenchmarks. New: `bench_plus_g_chain`, `bench_end_to_end_small_scalar`, `bench_variant_generation`, `bench_x_bytes`. |
+| `a90f1dc` | 2026-07-14 | fuzz: 3 new cargo-fuzz targets. `parse_pubkey_roundtrip` round-trips SEC1; `generate_variants` asserts invariants; `match_x` cross-checks against a naive linear scan. |
+| `2d5b31f` | 2026-07-14 | scripts: 3 new developer scripts. `build-pgo.sh` (PGO driver), `run-benchmarks.sh` (criterion wrapper), `check-all.sh` (full verification suite). |
+| `2fc1ec2` | 2026-07-14 | tests(audit): 20-case proptest over `[2, 10_000]` asserting any small scalar is recoverable end-to-end. |
+| `a08a789` | 2026-07-14 | tests(differential): extend `TEST_SCALARS` to 12 boundary scalars including `2^32`, `2^63`, `u64::MAX`. |
+| `7ff1347` | 2026-07-14 | tests(kat): 2 new KATs — `kat_scalar_mul_g_boundary` (verifies `2^32*G = double(2^31*G)`) and `kat_x_bytes_boundary` (round-trips 7 scalars through `x_bytes` + `scalar_mul_g`). |
+| `deac333` | 2026-07-14 | tests(integration): 20-case proptest for `precompute_chunk` — asserts the cache writer receives at least 32 bytes (one full batch) per session. |
+| `e2e5dd6` | 2026-07-14 | tests(integration): drop accidentally committed proptest-regressions file (test-local, not source). |
+| `a4adbb1` | 2026-07-14 | chore(gitignore): ignore proptest `*.proptest-regressions` files. |
+| `08daf0f` | 2026-07-14 | tests(orchestrator): `test_orchestrator_rejects_corrupt_checkpoint` asserts the orchestrator surfaces `Err(ResearchIntegrityError)` for a checkpoint with a wrong integrity anchor. |
+| `6661c4e` | 2026-07-14 | build(makefile): add `pgo`, `all-checks`, `audit`, `flamegraph`, `doc-check` targets; expand `make test` to run all targets + all features in release. |
+| `80e8ede` | 2026-07-14 | docs(readme): new top-level `Performance` section (where cycles go, the recent 2x cold-start win, CLI tunables) and `Research reproducibility` section (the 3 verification layers). |
+| `6082a8e` | 2026-07-14 | ci: add `bench` (informational, continue-on-error) and `coverage --fail-fast 80` (gates merge on 80% coverage). |
+| `6881765` | 2026-07-14 | fix(deps): bump `crossbeam-epoch` 0.9.18 → 0.9.20 to clear RUSTSEC-2026-0204 (transitive via `rayon` → `crossbeam-deque`). |
 
 ## [Unreleased]
 
-### Added
+### Performance (commit-by-commit)
+
+Twelve commits in this release landed a top-to-bottom performance pass on the search engine. Each commit is independently measurable; the cumulative effect is the loss of one heap allocation per match, one SEC1 round-trip per extracted X-coordinate, ~2× faster variant generation, and a 32 KiB stack scratch buffer for the cached sweep. See `docs/optimization-decisions/0001..0006` for the per-commit rationale.
+
+- `perf(ecc,search): use AffinePoint::x() and ::is_identity() directly` (`f6da4df`)
+- `perf(search): replace SearchMatch.candidates Vec<String> with [String; 2]` (`32e1685`)
+- `perf(search): generate_variants reuses 2^i*G via point doubling chain` (`984a3cb`)
+- `perf(search): u256_to_decimal drops num_bigint::BigUint allocation` (`a270182`)
+- `perf(persistence): perform_cached_sweep uses 32KiB stack scratch buffer` (`8b244b5`)
+- `perf(search): split VariantIndex into keys + order arrays` (`ff8d67a`)
+- `perf(search): AtomicBool fast-path + drop to_encoded_point in precompute_chunk` (`1d0cec7`)
+- `perf(search): variant_labels cached in OnceLock for process lifetime` (`f5be4d9`)
+- `perf(main): render_success_report builds single String buffer` (`09de317`)
+- `perf(build): add [profile.bench] and target-cpu=native rustflags` (`758761f`)
+- `feat(config): add --batch-size and --variants CLI flags` (`a267914`)
+- `perf(search): inline annotations on hot-path helpers` (`608521a`)
+
+### Open-source readiness
+
+- `chore(repo): canonicalize all repository URLs to sachncs/find` (`4c45e2e`)
+- `docs(changelog): add Commit Log table` (`3adb792`)
+- `docs(algorithms): worked numerical example for d=7 and d=2^30+4` (`ee60f65`)
+- `docs(architecture): add per-layer data layout table` (`bcc1f38`)
+- `docs(perf): inner-loop cycle breakdown table and optimization-decisions/ dir` (`948808d`)
+- `bench: add +G chain, end-to-end, variant-gen, x_bytes benchmarks` (`59ed449`)
+- `fuzz: add parse_pubkey_roundtrip, generate_variants, match_x targets` (`a90f1dc`)
+- `scripts: add build-pgo.sh, run-benchmarks.sh, check-all.sh` (`2d5b31f`)
+- `tests(audit): add 20-case property test for any small-scalar recovery` (`2fc1ec2`)
+- `tests(differential): extend TEST_SCALARS to 12 boundary scalars` (`a08a789`)
+- `tests(kat): add boundary scalar tests for scalar_mul_g and x_bytes` (`7ff1347`)
+- `tests(integration): add 20-case proptest for precompute_chunk round-trip` (`deac333`)
+- `tests(orchestrator): add test for corrupt-checkpoint rejection` (`08daf0f`)
+- `build(makefile): add pgo, all-checks, audit, flamegraph, doc-check targets` (`6661c4e`)
+- `docs(readme): add Performance and Research reproducibility sections` (`80e8ede`)
+- `ci: add bench (informational) and coverage-gate steps` (`6082a8e`)
+- `fix(deps): bump crossbeam-epoch 0.9.18 -> 0.9.20 to clear RUSTSEC-2026-0204` (`6881765`)
+- `chore(gitignore): ignore proptest-regressions files` (`a4adbb1`)
+
+### Added (documentation pass)
 - Comprehensive Rustdoc documentation pass: Mermaid module-dependency graph in `lib.rs`,
   Mermaid session-lifecycle diagram in `orchestrator.rs`, struct-level Examples for
   `SweepRange`, `Config`, `OffsetVariant`, `Checkpoint`, and `FindError`; per-function
