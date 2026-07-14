@@ -250,14 +250,13 @@ pub fn to_hex_x(p: &ProjectivePoint) -> String {
 
 /// Returns `true` if the point is the point-at-infinity (the additive identity).
 ///
-/// This is an equality check against `ProjectivePoint::IDENTITY`; it is
-/// suitable for use in the search hot path because it does not perform a
-/// modular inversion.
+/// This is a single-byte field check on the `infinity` flag stored inside
+/// the `ProjectivePoint`; it does not perform a modular inversion and
+/// is suitable for use in the search hot path.
 ///
 /// Note: this comparison is *not* constant-time in the side-channel sense —
-/// it short-circuits on the first differing coordinate. The wrapper as a
-/// whole is not constant-time; see the module-level doc for the threat
-/// model.
+/// it reads the public `infinity` flag. The wrapper as a whole is not
+/// constant-time; see the module-level doc for the threat model.
 ///
 /// # Examples
 ///
@@ -270,7 +269,8 @@ pub fn to_hex_x(p: &ProjectivePoint) -> String {
 /// ```
 #[inline(always)]
 pub fn is_identity(p: &ProjectivePoint) -> bool {
-    *p == ProjectivePoint::IDENTITY
+    use k256::elliptic_curve::Group;
+    bool::from(p.is_identity())
 }
 
 /// Extracts the 32-byte big-endian X-coordinate of an elliptic curve point
@@ -284,6 +284,14 @@ pub fn is_identity(p: &ProjectivePoint) -> bool {
 ///
 /// `Some([u8; 32])` containing the X-coordinate, or `None` if the point is
 /// the point-at-infinity (in which case the X-coordinate is undefined).
+///
+/// # Performance
+///
+/// Uses [`k256::elliptic_curve::point::AffineCoordinates::x`] directly
+/// rather than routing through `to_encoded_point(false)` + `EncodedPoint::x()`,
+/// saving one SEC1 prefix-byte computation per call. For batch callers in
+/// [`crate::search`], the affine normalization itself is amortized via
+/// Montgomery's simultaneous inversion (see ADR-0002).
 ///
 /// # Examples
 ///
@@ -300,19 +308,16 @@ pub fn is_identity(p: &ProjectivePoint) -> bool {
 /// ```
 #[inline]
 pub fn x_bytes(p: &ProjectivePoint) -> Option<[u8; 32]> {
-    if is_identity(p) {
+    use k256::elliptic_curve::point::AffineCoordinates;
+    use k256::elliptic_curve::Group;
+    if bool::from(p.is_identity()) {
         return None;
     }
     let affine = p.to_affine();
-    // Uncompressed SEC1 encoding (0x04 || X || Y); we drop the Y and keep
-    // the 32-byte big-endian X. This is the on-disk cache format too —
-    // see ADR-0006.
-    let encoded = affine.to_encoded_point(false);
-    encoded.x().map(|x| {
-        let mut b = [0u8; 32];
-        b.copy_from_slice(x.as_ref());
-        b
-    })
+    let x = affine.x();
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(x.as_ref());
+    Some(bytes)
 }
 
 #[cfg(test)]

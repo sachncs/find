@@ -871,13 +871,22 @@ pub const MAX_BATCH: usize = 32;
 /// Extracts the 32-byte big-endian X-coordinate from an affine point.
 ///
 /// Returns `None` if the point is the point-at-infinity.
+///
+/// Uses [`AffineCoordinates::x`] directly to avoid the `to_encoded_point`
+/// round-trip — saves one SEC1 prefix-byte computation per point in the
+/// hot loop. The `AffineCoordinates` trait is re-exported from
+/// `k256::elliptic_curve::point`.
+#[inline(always)]
 fn affine_x_bytes(affine: &AffinePoint) -> Option<[u8; 32]> {
-    let encoded = affine.to_encoded_point(false);
-    encoded.x().map(|x| {
-        let mut b = [0u8; 32];
-        b.copy_from_slice(x.as_ref());
-        b
-    })
+    use k256::elliptic_curve::group::prime::PrimeCurveAffine;
+    use k256::elliptic_curve::point::AffineCoordinates;
+    if bool::from(<AffinePoint as PrimeCurveAffine>::is_identity(affine)) {
+        return None;
+    }
+    let x = affine.x();
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(x.as_ref());
+    Some(bytes)
 }
 
 /// Converts a scalar to a lower-case hex string with leading zeros removed.
