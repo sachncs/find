@@ -52,11 +52,8 @@ fn test_mandatory_random_6_to_8_digits() {
     assert!(result.is_some(), "Match not found for 6-8 digit scalar");
 
     let m = result.unwrap();
-    let expected_d_hex = d_biguint.to_str_radix(16);
-    assert!(m
-        .candidates
-        .iter()
-        .any(|c| c.to_lowercase() == expected_d_hex.to_lowercase()));
+    let expected_scalar = biguint_to_scalar(&d_biguint);
+    assert!(m.candidates.contains(&expected_scalar));
 }
 
 /// Verifies recovery at the minimum 6-digit boundary.
@@ -115,8 +112,8 @@ proptest! {
     let result = search::perform_chunked_sweep(&index, j, j, 32);
         prop_assert!(result.is_some());
         let m = result.unwrap();
-        let expected_hex = d_val.to_str_radix(16);
-        prop_assert!(m.candidates.iter().any(|c| c.to_lowercase() == expected_hex.to_lowercase()));
+        let expected_scalar = biguint_to_scalar(&d_val);
+        prop_assert!(m.candidates.contains(&expected_scalar));
     }
 }
 
@@ -148,9 +145,9 @@ proptest! {
         let result = search::perform_chunked_sweep(&index, 1, 32, batch_size);
         prop_assert!(result.is_some(), "batch_size {batch_size}: no match");
         let m = result.unwrap();
-        let d_hex = format!("{:x}", d);
+        let d_scalar = k256::Scalar::from(d);
         prop_assert!(
-            m.candidates.iter().any(|c| c.to_lowercase() == d_hex),
+            m.candidates.contains(&d_scalar),
             "batch_size {batch_size}: d={d} not in candidates {:?}",
             m.candidates
         );
@@ -197,9 +194,9 @@ proptest! {
     let res = precompute_chunk(1, d + 64, &writer, Some(&index), &progress, 32).unwrap();
     prop_assert!(res.is_some(), "precompute must find d={d}");
     let m = res.unwrap();
-    let d_hex = format!("{:x}", d);
+    let d_scalar = k256::Scalar::from(d);
     prop_assert!(
-        m.candidates.iter().any(|c| c.to_lowercase() == d_hex),
+        m.candidates.contains(&d_scalar),
         "d={d} must appear in candidates {:?}",
         m.candidates
     );
@@ -236,15 +233,9 @@ fn test_idempotency_deterministic_output() {
     let res1 = search::perform_chunked_sweep(&index, j, j, 32).unwrap();
     let res2 = search::perform_chunked_sweep(&index, j, j, 32).unwrap();
 
-    let expected_hex = d_val.to_str_radix(16);
-    assert!(res1
-        .candidates
-        .iter()
-        .any(|c| c.to_lowercase() == expected_hex.to_lowercase()));
-    assert!(res2
-        .candidates
-        .iter()
-        .any(|c| c.to_lowercase() == expected_hex.to_lowercase()));
+    let expected_scalar = biguint_to_scalar(&d_val);
+    assert!(res1.candidates.contains(&expected_scalar));
+    assert!(res2.candidates.contains(&expected_scalar));
 }
 
 /// Helper: builds a target point from \(d = (2^{\text{power}} + j) \pmod n\),

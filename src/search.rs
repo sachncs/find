@@ -73,7 +73,6 @@ use k256::elliptic_curve::group::Curve;
 use k256::elliptic_curve::ops::Reduce;
 use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use tracing::instrument;
@@ -270,14 +269,11 @@ impl VariantIndex {
         let var = &self.variants[var_idx];
         let j_scalar = Scalar::from(j);
 
-        let c1 = var.v_scalar.add(&j_scalar);
-        let c2 = var.v_scalar.sub(&j_scalar);
-
         Some(SearchMatch {
             label: var.label.clone(),
             offset: var.offset.clone(),
             small_scalar: j,
-            candidates: [scalar_to_hex_trimmed(&c1), scalar_to_hex_trimmed(&c2)],
+            candidates: [var.v_scalar.add(&j_scalar), var.v_scalar.sub(&j_scalar)],
         })
     }
 
@@ -314,13 +310,16 @@ impl VariantIndex {
 /// The outcome of a successful match during a search sweep.
 ///
 /// `candidates` is a fixed-size two-element array (`[V + j, V - j] mod n`)
-/// because every match produces exactly two Y-parity candidates. Using
-/// `[String; 2]` instead of `Vec<String>` removes the heap allocation
-/// that previously accompanied every match — matches are infrequent
-/// (one per session in the typical case) but the savings also reduce
-/// the `SearchMatch` size from 56 to 32 bytes, which matters when
-/// callers hold the struct on the stack across hot paths.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+/// of [`Scalar`] values. Every match produces exactly two Y-parity
+/// candidates (the X-coordinate alone does not distinguish the two
+/// Y parities — see [ADR-0007](../docs/adr/0007-y-parity-ambiguity.md)).
+///
+/// Storing the candidates as `[Scalar; 2]` rather than `[String; 2]`
+/// removes two `format!`-style allocations per match and removes the
+/// redundant allocation in `candidates_as_scalars` (which previously
+/// had to re-decode the hex strings back into `Scalar`s). Callers that
+/// need the hex representation can call [`SearchMatch::candidates_hex`].
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SearchMatch {
     /// The label of the variant that matched.
@@ -329,10 +328,10 @@ pub struct SearchMatch {
     pub offset: String,
     /// The scalar \(j\) at which the match occurred.
     pub small_scalar: u64,
-    /// Hex-encoded candidate private keys `[V + j, V - j] (mod n)`.
+    /// Candidate private keys `[V + j, V - j] (mod n)` as [`Scalar`].
     ///
-    /// Two-element array by construction; see [ADR-0007](../docs/adr/0007-y-parity-ambiguity.md).
-    pub candidates: [String; 2],
+    /// Two-element array by construction.
+    pub candidates: [Scalar; 2],
 }
 
 impl SearchMatch {
@@ -346,16 +345,13 @@ impl SearchMatch {
     ///
     /// ```
     /// use find::search::SearchMatch;
+    /// use k256::Scalar;
     ///
     /// let m = SearchMatch::new(
     ///     "2^0",
     ///     "1",
     ///     2,
-    ///     [
-    ///         "03".to_string(),
-    ///         // n - 1: V - j mod n where V = 1, j = 2.
-    ///         "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140".to_string(),
-    ///     ],
+    ///     [Scalar::from(3u64), Scalar::from(0xfff...fffu64)],
     /// );
     /// assert_eq!(m.small_scalar, 2);
     /// assert_eq!(m.label, "2^0");
@@ -364,7 +360,7 @@ impl SearchMatch {
         label: impl Into<String>,
         offset: impl Into<String>,
         small_scalar: u64,
-        candidates: [String; 2],
+        candidates: [Scalar; 2],
     ) -> Self {
         Self {
             label: label.into(),
@@ -379,17 +375,15 @@ impl SearchMatch {
     /// Provided for API ergonomics — callers that want to iterate over
     /// both candidates uniformly can use `.as_slice()` rather than
     /// indexing into the array directly.
-    pub fn candidates(&self) -> &[String; 2] {
+    pub fn candidates(&self) -> &[Scalar; 2] {
         &self.candidates
     }
 
-    /// Converts the hex-encoded candidates to `Scalar` values for downstream
-    /// validation.
+    /// Returns the candidate private keys as a borrowed `[Scalar; 2]`.
     ///
-    /// # Errors
-    ///
-    /// Returns [`FindError::EccError`] if any candidate is not a valid
-    /// secp256k1 scalar (e.g., the value exceeds the curve order `n`).
+    /// This is the zero-allocation accessor equivalent of the previous
+    /// `candidates_as_scalars()` — the candidates are stored as
+    /// [`Scalar`] already, so no parsing is needed.
     ///
     /// # Examples
     ///
@@ -397,42 +391,46 @@ impl SearchMatch {
     /// use find::search::SearchMatch;
     /// use k256::Scalar;
     ///
-    /// // d = 3, V = 1, j = 2 -> V + j = 3, V - j = -1 mod n.
     /// let m = SearchMatch::new(
     ///     "2^0",
     ///     "1",
     ///     2,
-    ///     [
-    ///         "03".to_string(),
-    ///         // n - 1, the curve order minus one; ensures the second
-    ///         // candidate is a valid scalar (V - j = 1 - 2 = -1 mod n).
-    ///         "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140".to_string(),
-    ///     ],
+    ///     [Scalar::from(3u64), Scalar::from(0u64)],
     /// );
-    /// let scalars = m.candidates_as_scalars().unwrap();
+    /// let scalars = m.candidates_as_scalars();
     /// assert_eq!(scalars[0], Scalar::from(3u64));
     /// ```
-    pub fn candidates_as_scalars(&self) -> Result<[Scalar; 2]> {
-        let [a, b] = &self.candidates;
-        let sa = hex_str_to_scalar(a)?;
-        let sb = hex_str_to_scalar(b)?;
-        Ok([sa, sb])
+    pub fn candidates_as_scalars(&self) -> [Scalar; 2] {
+        self.candidates
     }
-}
 
-/// Converts a hex-encoded scalar string to a [`Scalar`].
-///
-/// Helper used by [`SearchMatch::candidates_as_scalars`].
-fn hex_str_to_scalar(hex_str: &str) -> Result<Scalar> {
-    use k256::elliptic_curve::PrimeField;
-    let bytes = hex::decode(hex_str)
-        .map_err(|e| FindError::EccError(format!("hex decode failed: {}", e)))?;
-    let mut fixed_bytes = [0u8; 32];
-    let len = bytes.len().min(32);
-    let src = &bytes[..len];
-    fixed_bytes[32 - src.len()..].copy_from_slice(src);
-    Option::from(Scalar::from_repr(fixed_bytes.into()))
-        .ok_or_else(|| FindError::EccError(format!("Scalar {} exceeds curve order n", hex_str)))
+    /// Returns the candidate private keys as lower-case hex strings.
+    ///
+    /// Each scalar is rendered as its 32-byte big-endian representation
+    /// with leading zeros trimmed (matching the previous `String`
+    /// representation in the deprecated form).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::search::SearchMatch;
+    /// use k256::Scalar;
+    ///
+    /// let m = SearchMatch::new(
+    ///     "2^0",
+    ///     "1",
+    ///     2,
+    ///     [Scalar::from(3u64), Scalar::from(0u64)],
+    /// );
+    /// let hexes = m.candidates_hex();
+    /// assert_eq!(hexes[0], "03");
+    /// ```
+    pub fn candidates_hex(&self) -> [String; 2] {
+        [
+            scalar_to_hex_trimmed(&self.candidates[0]),
+            scalar_to_hex_trimmed(&self.candidates[1]),
+        ]
+    }
 }
 
 /// A thread-safe progress counter for cache generation.
@@ -763,7 +761,7 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
 ///     let index = VariantIndex::new(variants, &x_bytes);
 ///     let m = perform_chunked_sweep(&index, 1, 100_000, 32)
 ///         .expect("match for d=12345 in [1, 100000]");
-///     assert!(m.candidates.iter().any(|c| c.to_lowercase() == "3039"));
+///     assert!(m.candidates.contains(&Scalar::from(3039u64)));
 ///     Ok(())
 /// }
 /// ```
@@ -1259,7 +1257,7 @@ mod tests {
         );
         let m = result.unwrap();
         assert!(
-            m.candidates.contains(&"3".to_string()),
+            m.candidates.contains(&Scalar::from(3u64)),
             "Candidates must include d=3, got: {:?} (found via {} at j={})",
             m.candidates,
             m.label,
@@ -1329,7 +1327,7 @@ mod tests {
             .expect("Must find a match for j=1, V=1");
         // The matched variant's V is 1, so d = V + j = 2 or d = V - j = 0.
         assert!(
-            m.candidates.contains(&"2".to_string()),
+            m.candidates.contains(&Scalar::from(2u64)),
             "Candidates must include d=2, got: {:?}",
             m.candidates
         );

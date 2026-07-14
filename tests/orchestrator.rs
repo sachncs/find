@@ -58,7 +58,7 @@ fn test_orchestrator_finds_small_scalar() {
     );
     let m = m.unwrap();
     assert!(
-        m.candidates.contains(&"5".to_string()),
+        m.candidates.contains(&k256::Scalar::from(5u64)),
         "Candidates must include d=5, got: {:?} (found via {} at j={} after {:?})",
         m.candidates,
         m.label,
@@ -126,7 +126,7 @@ fn test_orchestrator_resumes_from_checkpoint() {
     );
     let m = m.unwrap();
     assert!(
-        m.candidates.contains(&"5".to_string()),
+        m.candidates.contains(&k256::Scalar::from(5u64)),
         "Candidates must include d=5 after resume"
     );
 }
@@ -159,7 +159,7 @@ fn test_orchestrator_finds_small_scalar_with_cache() {
     );
     let m = m.unwrap();
     assert!(
-        m.candidates.contains(&"5".to_string()),
+        m.candidates.contains(&k256::Scalar::from(5u64)),
         "Candidates must include d=5 with cache, got: {:?}",
         m.candidates
     );

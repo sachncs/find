@@ -50,13 +50,13 @@ fn test_rigorous_recovery_1234567890() {
     );
     assert_eq!(m.offset, "1073741824", "Offset must be 2^30");
 
+    let recovered_scalar = ecc::hex_to_scalar(&known_d_hex).unwrap();
     assert!(
-        m.candidates.contains(&known_d_hex),
+        m.candidates.contains(&recovered_scalar),
         "Candidates MUST contain the original scalar (hex: {})",
         known_d_hex
     );
 
-    let recovered_scalar = ecc::hex_to_scalar(&known_d_hex).unwrap();
     let recovered_p = ecc::scalar_mul_g(&recovered_scalar);
     assert_eq!(
         recovered_p, target_p,
@@ -82,10 +82,8 @@ fn test_rigorous_recovery_1234567890() {
         "At least one candidate must satisfy d ≡ V ± j (mod n)"
     );
 
-    for candidate_hex in &m.candidates {
-        let s = ecc::hex_to_scalar(candidate_hex)
-            .expect("Every candidate must be a valid secp256k1 scalar < n");
-        let p = ecc::scalar_mul_g(&s);
+    for candidate in &m.candidates {
+        let p = ecc::scalar_mul_g(candidate);
         let _affine = p.to_affine();
     }
 
@@ -125,14 +123,19 @@ fn test_recovery_small_scalars() {
 
         let m = result.unwrap_or_else(|| panic!("Sweep MUST recover match for d={}", known_d));
 
+        let recovered = ecc::hex_to_scalar(&pad_hex(&d_hex)).unwrap();
         assert!(
-            m.candidates.contains(&d_hex),
+            m.candidates.contains(&recovered),
             "Candidates for d={} must contain the original scalar (hex: {})",
             known_d,
             d_hex
         );
-
-        let recovered = ecc::hex_to_scalar(&pad_hex(&d_hex)).unwrap();
+        assert!(
+            m.candidates.contains(&recovered),
+            "Candidates for d={} must contain the original scalar (hex: {})",
+            known_d,
+            d_hex
+        );
         let recovered_p = ecc::scalar_mul_g(&recovered);
         assert_eq!(
             recovered_p, target_p,
@@ -140,10 +143,8 @@ fn test_recovery_small_scalars() {
             known_d
         );
 
-        for candidate_hex in &m.candidates {
-            let s = ecc::hex_to_scalar(&pad_hex(candidate_hex))
-                .expect("Every candidate must be a valid secp256k1 scalar");
-            let p = ecc::scalar_mul_g(&s);
+        for candidate in &m.candidates {
+            let p = ecc::scalar_mul_g(candidate);
             let _affine = p.to_affine();
         }
 
@@ -176,10 +177,10 @@ proptest! {
         let m = search::perform_chunked_sweep(&index, 0, d + 10, 32)
             .unwrap_or_else(|| panic!("audit must recover d={d}"));
 
-        let d_hex = format!("{:x}", d);
+        let d_scalar = k256::Scalar::from(d);
         prop_assert!(
-            m.candidates.iter().any(|c| c.to_lowercase() == d_hex),
-            "d={d} (hex={d_hex}) must appear in candidates {:?}",
+            m.candidates.contains(&d_scalar),
+            "d={d} must appear in candidates {:?}",
             m.candidates
         );
     }

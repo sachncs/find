@@ -596,7 +596,7 @@ mod tests {
 
         assert_eq!(m.small_scalar, 1, "Should match at j=1");
         assert!(
-            m.candidates.contains(&"3".to_string()),
+            m.candidates.contains(&Scalar::from(3u64)),
             "Candidate must include d=3, got: {:?}",
             m.candidates
         );

@@ -145,7 +145,8 @@ fn render_success_report(m: find::search::SearchMatch, total_time: std::time::Du
     let _ = writeln!(out, "Shift scalar V: {}", m.offset);
     let _ = writeln!(out, "Search scalar j: {}", m.small_scalar);
     out.push_str("Target candidates (d = V +/- j):\n");
-    for (i, c) in m.candidates.iter().enumerate() {
+    let candidates_hex = m.candidates_hex();
+    for (i, c) in candidates_hex.iter().enumerate() {
         let _ = writeln!(out, "  [{}] 0x{}", i + 1, c);
     }
     let _ = writeln!(out, "Total Search Duration: {:?}", total_time);
@@ -205,11 +206,12 @@ mod tests {
     /// Verifies that [`render_success_report`] formats a match without panicking.
     #[test]
     fn test_render_success_report() {
+        use k256::Scalar;
         let m = find::search::SearchMatch::new(
             "2^10",
             "1024",
             42,
-            ["1066".to_string(), "982".to_string()],
+            [Scalar::from(1066u64), Scalar::from(982u64)],
         );
         // The function writes to stdout; we just verify it doesn't panic.
         render_success_report(m, std::time::Duration::from_secs(5));
