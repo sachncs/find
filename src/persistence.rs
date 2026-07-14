@@ -28,8 +28,8 @@
 //!   surfaces as a panic from the holding thread; we deliberately abort
 //!   rather than try to recover the file handle's state (see
 //!   [ADR-0008](../docs/adr/0008-mutex-poisoning-policy.md)).
-//! - [`perform_cached_sweep`] takes a `&File` and is single-threaded; the
-//!   `BufReader` is local to the function.
+//! - [`perform_cached_sweep`] takes a `&File` and is single-threaded; it
+//!   uses a 32 KiB stack scratch buffer to amortise read syscalls.
 //!
 //! # Platform behaviour
 //!
@@ -54,7 +54,7 @@ use k256::Scalar;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
-use std::io::{BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::path::Path;
 use tracing::instrument;
 
@@ -346,6 +346,13 @@ impl CacheWriter for FileCacheWriter {
     }
 }
 
+/// Size of the stack-allocated scratch buffer used by [`perform_cached_sweep`].
+///
+/// 32 KiB is enough to amortise one `read` syscall per ~1000 X-coordinates
+/// (each coordinate is 32 bytes). The buffer is stack-allocated to keep
+/// the working set in L1 cache and to avoid heap pressure during the sweep.
+const CACHED_SWEEP_BUF_SIZE: usize = 32 * 1024;
+
 /// Performs an I/O-bound search against a pre-computed binary cache.
 ///
 /// The cache is expected to contain a contiguous sequence of 32-byte
@@ -364,13 +371,22 @@ impl CacheWriter for FileCacheWriter {
 /// of 32 bytes.
 ///
 /// Returns [`FindError::Io`] on any read error other than clean EOF.
+///
+/// # Performance
+///
+/// Reads the file in 32 KiB chunks (≈1024 X-coordinates per syscall) into a
+/// stack-allocated buffer, then walks the buffer in 32-byte slices. The
+/// chunk size is small enough to keep the buffer in L1 cache but large
+/// enough to keep `read` syscalls off the hot path. This replaces the
+/// earlier `BufReader::read_exact(&mut [0u8; 32])` loop which, although
+/// buffered internally, paid per-call overhead for every 32-byte match.
 #[instrument(skip(index), level = "info")]
 pub fn perform_cached_sweep(
     index: &VariantIndex,
     cache_path: &Path,
     start_j: u64,
 ) -> Result<Option<SearchMatch>> {
-    let file = File::open(cache_path).map_err(FindError::Io)?;
+    let mut file = File::open(cache_path).map_err(FindError::Io)?;
     let metadata = file.metadata().map_err(FindError::Io)?;
     let file_size = metadata.len();
 
@@ -384,27 +400,34 @@ pub fn perform_cached_sweep(
         return Ok(None);
     }
 
-    let mut reader = BufReader::new(file);
-    let mut buffer = [0u8; 32];
+    let mut buffer = [0u8; CACHED_SWEEP_BUF_SIZE];
     let mut j = start_j;
+    let mut buf_pos = CACHED_SWEEP_BUF_SIZE;
+    let mut buf_len = CACHED_SWEEP_BUF_SIZE;
 
     loop {
-        match reader.read_exact(&mut buffer) {
-            Ok(()) => {
-                if let Some(m) = index.match_x(&buffer, j) {
-                    return Ok(Some(m));
+        // Refill the buffer if the previous read drained it.
+        if buf_pos >= buf_len {
+            match file.read(&mut buffer) {
+                Ok(0) => break, // clean EOF
+                Ok(n) => {
+                    buf_pos = 0;
+                    buf_len = n;
                 }
-                j += 1;
+                Err(e) => return Err(FindError::Io(e)),
             }
-            // `read_exact` returns `UnexpectedEof` precisely when the file
-            // ends mid-`buffer` read. Because we already validated that
-            // `file_size % 32 == 0` above, hitting this branch means we
-            // have consumed the entire cache cleanly — not a truncation.
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            // Any other I/O error is a real failure (e.g. a concurrent
-            // truncating writer or a hardware fault) and must be surfaced.
-            Err(e) => return Err(FindError::Io(e)),
         }
+
+        // Slice out the next 32-byte X-coordinate and probe the index.
+        let chunk: [u8; 32] = buffer[buf_pos..buf_pos + 32]
+            .try_into()
+            .expect("buffer slice is exactly 32 bytes");
+        buf_pos += 32;
+
+        if let Some(m) = index.match_x(&chunk, j) {
+            return Ok(Some(m));
+        }
+        j += 1;
     }
 
     Ok(None)
