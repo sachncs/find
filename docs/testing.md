@@ -17,20 +17,24 @@ Using the [`proptest`](https://docs.rs/proptest) crate, the tool verifies that a
 **Core invariant:** for any randomly generated scalar `d` and any variant shift `V`, the engine **must** be able to recover `d` if `j = |d - V|` is within the search range.
 
 ```rust
+use proptest::prelude::*;
+use find::ecc;
+use find::search;
+
 proptest! {
     #[test]
     fn prop_search_finds_any_scalar_in_range(j in 1u64..100_000u64) {
-        let v_val = BigUint::from(1u64) << 10;
-        let n = BigUint::parse_bytes(CURVE_ORDER_HEX.as_bytes(), 16).unwrap();
-        let d_val: BigUint = (&v_val + BigUint::from(j)) % &n;
+        // (Test scaffolding: build a target point for a known d = V + j)
+        // ...
 
-        let target_scalar = biguint_to_scalar(&d_val);
-        let target_p = ecc::scalar_mul_g(&target_scalar);
-        let variants = search::generate_variants(&target_p);
-        let index = VariantIndex::new(variants);
-
-        let result = search::perform_chunked_sweep(&index, j, j);
+        // Post-review API (commits 7b + 7c + 12):
+        let variants = search::generate_variants(&target_p);   // returns &'static [OffsetVariant]
+        let x_bytes = search::compute_variant_x_bytes(&target_p);
+        let index = search::VariantIndex::new(variants, &x_bytes);
+        let result = search::perform_chunked_sweep(&index, j, j, 32);  // batch_size = 32
         prop_assert!(result.is_some());
+        let m = result.unwrap();
+        prop_assert!(m.candidates.contains(&expected_scalar));  // [Scalar; 2] post-12
         // ...
     }
 }
@@ -39,8 +43,16 @@ proptest! {
 Property-based tests in the repository:
 
 - [`tests/integration.rs::prop_search_finds_any_scalar_in_range`](../tests/integration.rs)
+- [`tests/integration.rs::prop_batch_size_runtime`](../tests/integration.rs) — exercises `perform_chunked_sweep` over the runtime `Config::batch_size` range (1..=256) and asserts the match is invariant under the batch choice (commit 7b)
+- [`tests/integration.rs::prop_precompute_chunk_roundtrip`](../tests/integration.rs)
+- [`tests/audit.rs::prop_audit_recovers_any_small_scalar`](../tests/audit.rs)
 - [`src/ecc.rs::prop_sub_reversibility`](../src/ecc.rs)
 - [`src/ecc.rs::prop_sub_curve_membership`](../src/ecc.rs)
+- [`src/ecc.rs::prop_to_hex_x_idempotent`](../src/ecc.rs)
+- [`src/search.rs::prop_generate_variants_count`](../src/search.rs) — pinned-length 512 across random targets (commit 7c)
+- [`src/search.rs::prop_generate_variants_static_pointer`](../src/search.rs) — verifies the `OnceLock`-interned slice is the same pointer across calls (commit 7c)
+- [`src/search.rs::prop_scalar_to_hex_trimmed_inverts`](../src/search.rs)
+- [`tests/kat.rs::prop_to_hex_x_equals_x_bytes_hex`](../tests/kat.rs) — 100-case round-trip proptest pinning `to_hex_x` against `x_bytes` (commit 4)
 
 ### 2. Randomized discovery verification
 
@@ -53,8 +65,10 @@ A mandatory randomized test executes on every build to ensure the end-to-end pip
 ```rust
 #[test]
 fn test_mandatory_random_6_to_8_digits() {
+    use rand::RngExt;     // rand 0.10 extension trait
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    let j: u64 = rng.gen_range(100_000..=99_999_999);
+    // `random_range` is the rand 0.10 spelling (was `gen_range` in rand 0.8).
+    let j: u64 = rng.random_range(100_000..=99_999_999);
     // ...
 }
 ```
@@ -196,8 +210,22 @@ Property tests use deterministic seeds by default. To enable failure case record
 # Full suite (release mode, optimized)
 make test
 
-# Direct cargo invocation
+# Direct cargo invocation (lib + integration + doc + benches)
 cargo test --all-targets --all-features
+
+# Doc tests separately (often faster feedback)
+cargo test --doc
+
+# Strict clippy (mirrors the CI gate)
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Doc build must be warning-clean
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+
+# Miri on nightly (only required if a PR touches unsafe; ~10-30 min on a fresh sccache)
+rustup component add --toolchain nightly miri
+cargo +nightly miri setup
+cargo +nightly miri test --workspace --all-features
 ```
 
 ### Increased property-test cases
@@ -236,13 +264,16 @@ All changes are validated through GitHub Actions on **Ubuntu, macOS, and Windows
 |---|---|
 | `fmt` | `cargo fmt --all -- --check` |
 | `clippy` | `cargo clippy --all-targets --all-features -- -D warnings` |
-| `test` | `cargo test --all-targets --all-features` |
+| `test` | `cargo test --all-targets --all-features` (matrix: ubuntu/macos/windows) |
 | `doc` | `cargo doc --no-deps --all-features` with `RUSTDOCFLAGS="-D warnings"` |
+| `miri` | `cargo +nightly miri test --workspace --all-features` (**required-for-merge** since commit 9; verifies the one reviewed `unsafe` block in `src/persistence.rs`) |
 | `audit` | `cargo audit` for security advisories |
 | `deny` | `cargo deny check all` for license/dependency auditing |
 | `coverage` | `cargo tarpaulin` for code coverage reporting |
 
 The `coverage` job uploads a `cobertura.xml` to Codecov. The `fail_ci_if_error: false` setting means coverage regressions do not block merges, but trends are tracked.
+
+The `miri` job runs on `ubuntu-latest` with the nightly toolchain; it is required-for-merge (no `continue-on-error`). A local PR may opt to skip the miri run when its diff does not touch `unsafe`, but a passing nightly-miri run is still required by CI before merge. See [CONTRIBUTING.md#unsafe-code-changes-must-pass-miri](../CONTRIBUTING.md) for the developer policy.
 
 ## Code coverage
 
@@ -260,14 +291,28 @@ make coverage
 
 ## Test categories summary
 
+At the last full-suite run (`cargo test --all-targets --all-features`)
+the project carries **112 tests across 7 binaries**:
+
+- 71 unit tests in `src/`
+- 13 KAT tests in `tests/kat.rs` (plus the 100-case `prop_to_hex_x_equals_x_bytes_hex` proptest)
+- 4 tests in `tests/audit.rs` (plus the 20-case `prop_audit_recovers_any_small_scalar` proptest)
+- 12 tests in `tests/integration.rs` (plus 3 proptests)
+- 6 tests in `tests/orchestrator.rs`
+- 3 tests in the binary test mod (`src/main.rs`)
+- 3 tests in the differential suite (`tests/differential.rs`)
+
 | Category | Purpose | Tooling |
 |---|---|---|
 | Unit | Individual functions in `src/` | `#[cfg(test)] mod tests` |
 | Integration | Component interactions | `tests/*.rs` |
-| Property | Algebraic invariants | `proptest` |
-| End-to-end | Full pipeline recovery | `tests/audit.rs` |
-| Orchestrator | Session lifecycle | `tests/orchestrator.rs` |
-| Benchmarks | Performance regression | `criterion` |
+| Property (algebraic) | Random scalars over a deterministic slice; finds `d = V + j`; reverses subtraction; recovers small scalars; locks `to_hex_x` ↔ `x_bytes` round-trip | `proptest` |
+| KAT (Known-Answer Tests) | SEC1 §2.7.1 vectors + `k256` reference outputs | `tests/kat.rs` |
+| Differential | `k256` vs reference C `libsecp256k1` | `tests/differential.rs` |
+| End-to-end / audit | Full pipeline recovery | `tests/audit.rs` |
+| Orchestrator | Session lifecycle, checkpoint resume, corruption rejection | `tests/orchestrator.rs` |
+| Miri (CI, required for `unsafe` changes) | Verifies the reviewed `libc::fsync` block; the rest of the codebase is safe by construction | `cargo +nightly miri test` |
+| Benchmarks | Performance regression within the 5% gate | `criterion` |
 | Audit (CI) | Vulnerability database | `cargo audit` |
 | License (CI) | Dependency license compliance | `cargo deny` |
 | Coverage (CI) | Line coverage tracking | `cargo tarpaulin` |

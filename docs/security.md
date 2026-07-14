@@ -11,11 +11,12 @@ The tool is for **educational and research use only**. It is not designed to pro
 | Threat | Mitigation |
 |---|---|
 | **Cryptographic correctness.** A bug in scalar arithmetic, modular reduction, or X-coordinate extraction could produce silently wrong candidates. | Property-based tests, integration tests with known scalars, deterministic RNG for randomized discovery, `k256` as the cryptographic primitive. |
-| **File-system race conditions.** Concurrent writes to the checkpoint or cache could corrupt the state. | Write-then-rename atomic persistence (see [ADR-0003](adr/0003-atomic-checkpointing.md)); parent-directory `fsync` on Unix; `Mutex<File>` in `FileCacheWriter`. |
+| **File-system race conditions.** Concurrent writes to the checkpoint or cache could corrupt the state. | Write-then-rename atomic persistence (see [ADR-0003](adr/0003-atomic-checkpointing.md)); parent-directory `fsync` on Unix; `Mutex<File>` in `FileCacheWriter` (non-Unix fallback only). |
 | **Cache corruption.** A truncated or modified cache file could produce wrong matches. | Size must be a multiple of 32 bytes; `CacheCorrupted` error otherwise (see [ADR-0006](adr/0006-binary-cache-format.md)). |
-| **Memory safety.** A use-after-free, buffer overflow, or out-of-bounds access. | One reviewed `unsafe` call (`libc::fsync` in `src/persistence.rs`); no other `unsafe` in application code. |
+| **Memory safety.** A use-after-free, buffer overflow, or out-of-bounds access. | One reviewed `unsafe` call (`libc::fsync` in `src/persistence.rs`); no other `unsafe` in application code. `precompute_chunk`'s cross-batch coordination was migrated from `Mutex<Option<SearchMatch>>` + `AtomicBool` (poisoning-prone) to a single `OnceLock<SearchMatch>` in commit 6; `u256_to_decimal`'s `String::from_utf8_unchecked` was removed in commit 1. |
+| **Input-validation bypass.** A malformed pubkey that slipped past the shallow check (non-empty / not whitespace-only) could still produce a hard-to-diagnose `ecc::parse_pubkey` failure mid-session. | `Config::validate_pubkey` (deep SEC1 parse) runs at the top of `orchestrator::run`, and the CLI's `--batch-size` / `--variants` are flow-validated through the fallible `Config::try_with_batch_size` / `try_with_variant_count` builders (commit 7a). |
 | **Dependency vulnerabilities.** A bug in `k256`, `rayon`, or another dependency. | `cargo audit` in CI on every push (`.github/workflows/ci.yml`); `cargo deny check` for license and dependency-graph auditing. |
-| **Panic in a Rayon worker.** A panic in one worker could abort the entire process. | Custom `panic_handler` in `src/main.rs` that logs and continues; `Mutex::lock()` callers tolerate poisoning via `into_inner()`. |
+| **Panic in a Rayon worker.** A panic in one worker could abort the entire process. | Custom `panic_handler` in `src/main.rs` that logs and continues. `precompute_chunk` uses `OnceLock<SearchMatch>` which has no mutex to be poisoned; the only remaining `Mutex` (`FileCacheWriter`'s non-Unix fallback in `src/persistence.rs`) is in I/O code paths, not the search hot path. |
 
 ### Out of scope
 

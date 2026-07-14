@@ -83,7 +83,13 @@ let _ = rayon::ThreadPoolBuilder::new()
     .build_global();
 ```
 
-By default, a Rayon worker panic causes the entire process to abort. The custom handler logs the panic and continues — the search engine's `Mutex::lock()` calls tolerate the resulting poisoned lock via `into_inner()`. This makes the tool more robust to transient worker errors at the cost of potentially returning a partial result.
+By default, a Rayon worker panic causes the entire process to abort. The custom handler logs the panic and continues. The hot path uses
+[`OnceLock<SearchMatch>`](../optimization-decisions/0007-oncelock-early-exit.md)
+for cross-batch coordination, which has **no mutex** to poison; the only
+`Mutex` left in the application (`FileCacheWriter`'s non-Unix fallback
+in `src/persistence.rs`) cannot be reached by the worker panics handled
+here. This makes the tool more robust to transient worker errors at the
+cost of potentially returning a partial result.
 
 ## Per-batch tracing (debug/trace only)
 

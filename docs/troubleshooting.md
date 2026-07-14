@@ -12,9 +12,10 @@ You are likely using an incompatible version of the `k256` crate. Pin the versio
 k256 = { version = "0.13", features = ["arithmetic", "serde", "bits", "pkcs8"] }
 ```
 
-### `error: package 'find' v1.0.0 (...) cannot be built because it requires rustc 1.70 or newer`
+### `error: package 'find' v0.1.6 (...) cannot be built because it requires rustc 1.81 or newer`
 
-Update your Rust toolchain:
+The MSRV was bumped from 1.70 to 1.81 in commit 16 to use the stable
+`core::error::Error` trait. Update your Rust toolchain:
 
 ```bash
 rustup update
@@ -174,10 +175,25 @@ Check the following:
 | Code | Meaning |
 |---|---|
 | `0` | Search completed; either a match was found or the space was exhausted without a match |
-| `1` | Generic error (any `FindError` variant); the error message is printed to stderr |
+| `1` | Generic error (any `FindError` variant, including `InvalidConfig` for out-of-range `--batch-size` / `--variants`); the error message is printed to stderr |
 | `101` | Rust panic (only if `RUST_BACKTRACE=1` is set) |
 
 The exit code is set by `anyhow` based on the underlying `Result`. Any error from the tool's call chain produces a non-zero exit.
+
+## Miri failures
+
+`cargo +nightly miri test --workspace --all-features` is required for any PR that adds or modifies `unsafe` code. If you see a miri failure locally:
+
+```bash
+# Re-run a specific test under miri
+cargo +nightly miri test --workspace --all-features -- prop_to_hex_x_idempotent
+
+# If proptest's FileFailurePersistence fails on `std::env::current_dir`,
+# that's a known interaction between proptest and miri's isolation model;
+# unset PROPTEST_NO_PERSISTENCE (it is set by the CI workflow) and re-run.
+```
+
+The non-Unix `Mutex<File>` inside `FileCacheWriter` is the only place where miri may flag a path; it has been exercised on `ubuntu-latest` in CI without issue. If a miri failure points elsewhere in the codebase, **the change must be reverted** per [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Getting help
 
