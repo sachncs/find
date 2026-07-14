@@ -139,12 +139,29 @@ pub struct OffsetVariant {
 
 /// Cache-optimized lookup index for variant matching.
 ///
-/// Building the index sorts variants by X-coordinate so that each lookup
-/// during the sweep is an \(O(\log N)\) binary search instead of a linear
-/// scan over all variants.
+/// The index stores variant X-coordinates in a flat `[[u8; 32]; N]` array
+/// sorted in ascending order. A separate `Vec<usize>` holds the
+/// permutation that maps each sorted position back to the original
+/// variant index in [`variants`](Self::variants). Lookups are
+/// \(O(\log N)\) binary searches against the keys array.
+///
+/// # Memory layout
+///
+/// For the typical \(N = 512\) variant set:
+///
+/// - `keys`: 512 × 32 = 16 KiB (L1-resident on every modern x86_64 / aarch64)
+/// - `order`: 512 × 8 = 4 KiB
+/// - `variants`: ~512 × 96 = ~48 KiB (heap, not L1)
+///
+/// This is a deliberate structure-of-arrays (SoA) layout — the keys and
+/// permutation are stored separately so the binary-search hot loop only
+/// touches the 16 KiB keys array, while the variant metadata stays in
+/// cold storage and is only fetched on a match. See
+/// [ADR-0001](../docs/adr/0001-multi-variant-search.md).
 #[derive(Debug, Clone)]
 pub struct VariantIndex {
-    sorted_entries: Vec<([u8; 32], usize)>,
+    keys: Vec<[u8; 32]>,
+    order: Vec<usize>,
     variants: Vec<OffsetVariant>,
 }
 
@@ -172,14 +189,28 @@ impl VariantIndex {
     /// assert_eq!(index.variants().len(), 512);
     /// ```
     pub fn new(variants: Vec<OffsetVariant>) -> Self {
-        let mut entries = Vec::with_capacity(variants.len());
+        // Build the (key, original-index) pairs and sort by key.
+        let n = variants.len();
+        let mut pairs: Vec<([u8; 32], usize)> = Vec::with_capacity(n);
         for (i, var) in variants.iter().enumerate() {
-            entries.push((var.x_bytes, i));
+            pairs.push((var.x_bytes, i));
         }
-        entries.sort_unstable_by_key(|a| a.0);
+        pairs.sort_unstable_by_key(|p| p.0);
+
+        // Split into two parallel arrays: keys (32 bytes each) and order
+        // (8 bytes each). The split halves the per-element size from 40
+        // bytes to 32 bytes, improving cache-line density on the binary-
+        // search hot loop.
+        let mut keys = Vec::with_capacity(n);
+        let mut order = Vec::with_capacity(n);
+        for (k, idx) in pairs {
+            keys.push(k);
+            order.push(idx);
+        }
 
         Self {
-            sorted_entries: entries,
+            keys,
+            order,
             variants,
         }
     }
@@ -201,26 +232,28 @@ impl VariantIndex {
     ///
     /// * `test_x` — A 32-byte big-endian X-coordinate to search for.
     /// * `j` — The small scalar that produced `test_x` (i.e. \(j \cdot G\)).
-    #[inline(always)]
+    ///
+    /// # Performance
+    ///
+    /// The binary search walks `keys` only; the variant metadata is
+    /// fetched on a match via `order[idx] -> variants[order[idx]]`. Cold-
+    /// storage indirection on miss keeps the hot loop in L1.
+    #[inline]
     pub fn match_x(&self, test_x: &[u8; 32], j: u64) -> Option<SearchMatch> {
-        self.sorted_entries
-            .binary_search_by(|probe| probe.0.cmp(test_x))
-            .ok()
-            .map(|idx| {
-                let (_, var_idx) = self.sorted_entries[idx];
-                let var = &self.variants[var_idx];
-                let j_scalar = Scalar::from(j);
+        let idx = self.keys.binary_search_by(|probe| probe.cmp(test_x)).ok()?;
+        let var_idx = self.order[idx];
+        let var = &self.variants[var_idx];
+        let j_scalar = Scalar::from(j);
 
-                let c1 = var.v_scalar.add(&j_scalar);
-                let c2 = var.v_scalar.sub(&j_scalar);
+        let c1 = var.v_scalar.add(&j_scalar);
+        let c2 = var.v_scalar.sub(&j_scalar);
 
-                SearchMatch {
-                    label: var.label.clone(),
-                    offset: var.offset.clone(),
-                    small_scalar: j,
-                    candidates: [scalar_to_hex_trimmed(&c1), scalar_to_hex_trimmed(&c2)],
-                }
-            })
+        Some(SearchMatch {
+            label: var.label.clone(),
+            offset: var.offset.clone(),
+            small_scalar: j,
+            candidates: [scalar_to_hex_trimmed(&c1), scalar_to_hex_trimmed(&c2)],
+        })
     }
 
     /// Returns a slice of the backing variants.
