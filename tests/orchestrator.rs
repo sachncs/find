@@ -173,3 +173,49 @@ fn test_orchestrator_finds_small_scalar_with_cache() {
         .collect();
     assert!(!entries.is_empty(), "At least one cache chunk should exist");
 }
+
+/// Verifies that a session that has a corrupted checkpoint (valid
+/// last_j but wrong integrity anchor) is rejected with a
+/// [`FindError::ResearchIntegrityError`], forcing the user to delete
+/// the corrupt checkpoint.
+#[test]
+fn test_orchestrator_rejects_corrupt_checkpoint() {
+    let d_hex = "05";
+    let target_p = ecc::scalar_mul_g(&ecc::hex_to_scalar(d_hex).unwrap());
+    let encoded = target_p.to_affine().to_encoded_point(true);
+    let pubkey = hex::encode(encoded.as_bytes());
+
+    let dir = tempdir().unwrap();
+    let output_dir = dir.path().join("data");
+    let log_dir = dir.path().join("logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+
+    // Seed a checkpoint with last_j=0 but a deliberately wrong
+    // integrity anchor (not the X-coordinate of 0*G = identity).
+    let checkpoint = find::persistence::Checkpoint {
+        last_j: 0,
+        pubkey: pubkey.clone(),
+        last_x: "00".repeat(32), // wrong — should be x(identity) = 0...0 OR x(0·G) = whatever
+    };
+    let cp_path = output_dir.join("checkpoint.json");
+    std::fs::create_dir_all(&output_dir).unwrap();
+    checkpoint.save_atomic(&cp_path).unwrap();
+
+    // Note: 00..0 happens to be the canonical X for the identity
+    // point, so this anchor is actually valid for last_j=0. To
+    // produce a true mismatch, use a non-zero X.
+    let corrupt_x = "ff".repeat(32);
+    let corrupt = find::persistence::Checkpoint {
+        last_j: 100,
+        pubkey: pubkey.clone(),
+        last_x: corrupt_x,
+    };
+    corrupt.save_atomic(&cp_path).unwrap();
+
+    let config = Config::new(pubkey, output_dir.to_string_lossy().into_owned(), false);
+    let res = run(&config);
+    assert!(
+        matches!(res, Err(find::error::FindError::ResearchIntegrityError(_))),
+        "Corrupt checkpoint must surface ResearchIntegrityError, got: {res:?}"
+    );
+}
