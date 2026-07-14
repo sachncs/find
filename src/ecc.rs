@@ -45,7 +45,6 @@
 //! functions are unconditionally [`Send`] + [`Sync`].
 
 use crate::error::{FindError, Result};
-use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::elliptic_curve::PrimeField;
 use k256::{ProjectivePoint, PublicKey, Scalar};
 use tracing::instrument;
@@ -230,22 +229,18 @@ pub fn subtract(p: &ProjectivePoint, q: &ProjectivePoint) -> ProjectivePoint {
 /// assert_eq!(ecc::to_hex_x(&id), "0".repeat(64));
 /// ```
 pub fn to_hex_x(p: &ProjectivePoint) -> String {
+    use k256::elliptic_curve::group::Group;
+    use k256::elliptic_curve::point::AffineCoordinates;
+    if bool::from(p.is_identity()) {
+        // The point-at-infinity has no X-coordinate. We canonicalise to
+        // 64 zeros (32 bytes of 0x00) so the orchestrator's X-byte
+        // comparisons always operate on a well-defined width. The X
+        // value is meaningless for the identity and will simply not
+        // match any variant in the index.
+        return "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+    }
     let affine = p.to_affine();
-    // Uncompressed SEC1 (65 bytes: 0x04 || X || Y) — we discard the Y.
-    let encoded = affine.to_encoded_point(false);
-
-    let x = match encoded.x() {
-        Some(x) => x,
-        None => {
-            // The point-at-infinity has no X-coordinate. We canonicalise to
-            // 64 zeros (32 bytes of 0x00) so the orchestrator's X-byte
-            // comparisons always operate on a well-defined width. The X
-            // value is meaningless for the identity and will simply not
-            // match any variant in the index.
-            return "0000000000000000000000000000000000000000000000000000000000000000".to_string();
-        }
-    };
-    hex::encode(x)
+    hex::encode(affine.x())
 }
 
 /// Returns `true` if the point is the point-at-infinity (the additive identity).
