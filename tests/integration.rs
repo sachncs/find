@@ -47,7 +47,7 @@ fn test_mandatory_random_6_to_8_digits() {
     let variants = search::generate_variants(&target_p);
     let index = VariantIndex::new(variants);
 
-    let result = search::perform_chunked_sweep(&index, j, j);
+    let result = search::perform_chunked_sweep(&index, j, j, 32);
     assert!(result.is_some(), "Match not found for 6-8 digit scalar");
 
     let m = result.unwrap();
@@ -110,7 +110,7 @@ proptest! {
         let variants = search::generate_variants(&target_p);
         let index = VariantIndex::new(variants);
 
-        let result = search::perform_chunked_sweep(&index, j, j);
+    let result = search::perform_chunked_sweep(&index, j, j, 32);
         prop_assert!(result.is_some());
         let m = result.unwrap();
         let expected_hex = d_val.to_str_radix(16);
@@ -124,6 +124,34 @@ fn test_failure_malformed_hex() {
     let malformed = "not_hex_at_all";
     let res = ecc::parse_pubkey(malformed);
     assert!(res.is_err());
+}
+
+// Property: `perform_chunked_sweep` produces the same match against a
+// known target for arbitrary batch_size values in [1, 256]. Pins down
+// the contract introduced in commit 7b: the hot-path batch arrays now
+// honour config.batch_size at runtime, and must continue to discover
+// the same match regardless of the batching choice.
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(8))]
+    #[test]
+    fn prop_batch_size_runtime(batch_size in 1u32..=256u32) {
+        let d = 7u64;
+        let target_p = ecc::scalar_mul_g(&k256::Scalar::from(d));
+        let variants = search::generate_variants(&target_p);
+        let index = VariantIndex::new(variants);
+
+        // Sweep a tight range so the test completes quickly even with
+        // batch_size = 1.
+        let result = search::perform_chunked_sweep(&index, 1, 32, batch_size);
+        prop_assert!(result.is_some(), "batch_size {batch_size}: no match");
+        let m = result.unwrap();
+        let d_hex = format!("{:x}", d);
+        prop_assert!(
+            m.candidates.iter().any(|c| c.to_lowercase() == d_hex),
+            "batch_size {batch_size}: d={d} not in candidates {:?}",
+            m.candidates
+        );
+    }
 }
 
 // Property test: `precompute_chunk` round-trip — the cached file
@@ -162,7 +190,7 @@ proptest! {
     let writer = MemWriter(Mutex::new(Vec::new()));
     let progress = Progress::new();
 
-    let res = precompute_chunk(1, d + 64, &writer, Some(&index), &progress).unwrap();
+    let res = precompute_chunk(1, d + 64, &writer, Some(&index), &progress, 32).unwrap();
     prop_assert!(res.is_some(), "precompute must find d={d}");
     let m = res.unwrap();
     let d_hex = format!("{:x}", d);
@@ -200,8 +228,8 @@ fn test_idempotency_deterministic_output() {
     let variants = search::generate_variants(&target_p);
     let index = VariantIndex::new(variants);
 
-    let res1 = search::perform_chunked_sweep(&index, j, j).unwrap();
-    let res2 = search::perform_chunked_sweep(&index, j, j).unwrap();
+    let res1 = search::perform_chunked_sweep(&index, j, j, 32).unwrap();
+    let res2 = search::perform_chunked_sweep(&index, j, j, 32).unwrap();
 
     let expected_hex = d_val.to_str_radix(16);
     assert!(res1
@@ -226,7 +254,7 @@ fn run_controlled_test(j: u64, v_power: u32, label: &str) {
     let variants = search::generate_variants(&target_p);
     let index = VariantIndex::new(variants);
 
-    let result = search::perform_chunked_sweep(&index, j, j);
+    let result = search::perform_chunked_sweep(&index, j, j, 32);
     assert!(result.is_some(), "Failed boundary/edge test: {}", label);
 }
 

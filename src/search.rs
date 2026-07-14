@@ -34,11 +34,16 @@
 //!
 //! # Memory layout
 //!
-//! All hot-path arrays are stack-allocated with a fixed maximum batch size
-//! ([`MAX_BATCH`], equal to [`BATCH_SIZE`]). This bounds per-batch stack
-//! usage at ~3 KB on x86_64 (32 × 96 bytes for [`ProjectivePoint`] + a
-//! small [`AffinePoint`] buffer + a 32 × 32 byte X-coordinate scratch
-//! buffer), keeping the working set inside L1 cache.
+//! Hot-path arrays are heap-allocated and track the runtime
+//! [`crate::config::Config::batch_size`] (capped at
+//! [`crate::config::BatchSize::MAX`] = 256). At the default
+//! `batch_size = 32` the per-batch allocation cost is ~3 KB on x86_64
+//! (32 × 96 bytes for [`ProjectivePoint`] + 32 × 96 bytes for
+//! [`AffinePoint`] + 32 × 32 bytes for the X-coordinate scratch
+//! buffer), keeping the working set inside L1 cache. The runtime-
+//! sized arrays replace the previous compile-time-bounded
+//! `[ProjectivePoint; MAX_BATCH]` allocation; see ADR-0009 for the
+//! rationale.
 //!
 //! # Algorithm overview
 //!
@@ -722,7 +727,7 @@ pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let target = ecc::scalar_mul_g(&Scalar::from(12345u64));
 ///     let index = VariantIndex::new(generate_variants(&target));
-///     let m = perform_chunked_sweep(&index, 1, 100_000)
+///     let m = perform_chunked_sweep(&index, 1, 100_000, 32)
 ///         .expect("match for d=12345 in [1, 100000]");
 ///     assert!(m.candidates.iter().any(|c| c.to_lowercase() == "3039"));
 ///     Ok(())
@@ -769,27 +774,35 @@ fn variant_labels() -> &'static ([String; 256], [String; 256]) {
 ///
 /// `Some(SearchMatch)` on the first match found, or `None` if the entire
 /// range is exhausted without a match.
-pub fn perform_chunked_sweep(index: &VariantIndex, start: u64, end: u64) -> Option<SearchMatch> {
+pub fn perform_chunked_sweep(
+    index: &VariantIndex,
+    start: u64,
+    end: u64,
+    batch_size: u32,
+) -> Option<SearchMatch> {
     let start = start.max(1);
     if start > end {
         return None;
     }
+    let batch_size = batch_size as u64;
 
     let range_len = end.saturating_sub(start).saturating_add(1);
     let num_batches = if range_len == 0 {
         0
     } else {
-        (range_len - 1) / BATCH_SIZE + 1
+        (range_len - 1) / batch_size + 1
     };
 
     (0..num_batches).into_par_iter().find_map_any(|batch_idx| {
-        let batch_offset = batch_idx * BATCH_SIZE;
+        let batch_offset = batch_idx * batch_size;
         let chunk_start = start.saturating_add(batch_offset);
-        let chunk_end = (chunk_start.saturating_add(BATCH_SIZE - 1)).min(end);
+        let chunk_end = (chunk_start.saturating_add(batch_size - 1)).min(end);
 
         let count = (chunk_end.saturating_sub(chunk_start).saturating_add(1)) as usize;
-        let mut points = [ProjectivePoint::IDENTITY; MAX_BATCH];
-        let mut affines = [AffinePoint::IDENTITY; MAX_BATCH];
+        // Heap-allocated so the array size tracks config.batch_size at
+        // runtime, not at compile time. See ADR-0009.
+        let mut points: Vec<ProjectivePoint> = vec![ProjectivePoint::IDENTITY; count];
+        let mut affines: Vec<AffinePoint> = vec![AffinePoint::IDENTITY; count];
 
         // Bootstrap: one scalar multiplication to get (chunk_start)·G.
         // After that, advance by adding G once per step — a mixed addition
@@ -798,14 +811,14 @@ pub fn perform_chunked_sweep(index: &VariantIndex, start: u64, end: u64) -> Opti
         // the search engine (~20× vs. independent scalar muls).
         // See ADR-0002 for the full rationale.
         let mut current = ecc::scalar_mul_g(&Scalar::from(chunk_start));
-        for p in points.iter_mut().take(count) {
+        for p in points.iter_mut() {
             *p = current;
             current += ecc::generator();
         }
 
-        ProjectivePoint::batch_normalize(&points[..count], &mut affines[..count]);
+        ProjectivePoint::batch_normalize(&points, &mut affines);
 
-        for (i, affine) in affines.iter().enumerate().take(count) {
+        for (i, affine) in affines.iter().enumerate() {
             let j = chunk_start + i as u64;
             if let Some(x_bytes) = affine_x_bytes(affine) {
                 if let Some(m) = index.match_x(&x_bytes, j) {
@@ -884,17 +897,19 @@ pub fn precompute_chunk<W: CacheWriter>(
     writer: &W,
     index: Option<&VariantIndex>,
     progress: &Progress,
+    batch_size: u32,
 ) -> Result<Option<SearchMatch>> {
     let start = start.max(1);
     if start > end {
         return Ok(None);
     }
+    let batch_size = batch_size as u64;
 
     let range_len = end.saturating_sub(start).saturating_add(1);
     let num_batches = if range_len == 0 {
         0
     } else {
-        (range_len - 1) / BATCH_SIZE + 1
+        (range_len - 1) / batch_size + 1
     };
     // `OnceLock<SearchMatch>` as the one-shot best-effort broadcast
     // channel. Workers check `get()` lock-free at the top of each batch
@@ -915,31 +930,33 @@ pub fn precompute_chunk<W: CacheWriter>(
                 return Ok(());
             }
 
-            let batch_offset = batch_idx * BATCH_SIZE;
+            let batch_offset = batch_idx * batch_size;
             let chunk_start = start.saturating_add(batch_offset);
-            let chunk_end = (chunk_start.saturating_add(BATCH_SIZE - 1)).min(end);
+            let chunk_end = (chunk_start.saturating_add(batch_size - 1)).min(end);
             let count = (chunk_end.saturating_sub(chunk_start).saturating_add(1)) as usize;
 
-            let mut points = [ProjectivePoint::IDENTITY; MAX_BATCH];
-            let mut affines = [AffinePoint::IDENTITY; MAX_BATCH];
+            // Heap-allocated so the array size tracks config.batch_size.
+            // See ADR-0009.
+            let mut points: Vec<ProjectivePoint> = vec![ProjectivePoint::IDENTITY; count];
+            let mut affines: Vec<AffinePoint> = vec![AffinePoint::IDENTITY; count];
 
             // `+ G` increment chain: see `perform_chunked_sweep` for the
             // full rationale. One bootstrap scalar mul + (count - 1) mixed
             // additions is ~20× faster than `count` independent scalar muls.
             // See ADR-0002.
             let mut current = ecc::scalar_mul_g(&Scalar::from(chunk_start));
-            for p in points.iter_mut().take(count) {
+            for p in points.iter_mut() {
                 *p = current;
                 current += ecc::generator();
             }
 
-            ProjectivePoint::batch_normalize(&points[..count], &mut affines[..count]);
+            ProjectivePoint::batch_normalize(&points, &mut affines);
 
-            let mut block = [0u8; 32 * MAX_BATCH];
+            let mut block: Vec<u8> = vec![0u8; count * 32];
             let mut block_len = 0usize;
             let mut local_match = None;
 
-            for (i, affine) in affines.iter().enumerate().take(count) {
+            for (i, affine) in affines.iter().enumerate() {
                 let j = chunk_start + i as u64;
                 let x_bytes = match affine_x_bytes(affine) {
                     Some(x) => x,
@@ -967,8 +984,8 @@ pub fn precompute_chunk<W: CacheWriter>(
             }
 
             // Cache-file byte offset for this batch's X-coordinates.
-            // BATCH_SIZE scalars × 32 bytes per X-coordinate (SEC1 X-only).
-            let offset = batch_idx * BATCH_SIZE * 32;
+            // batch_size scalars × 32 bytes per X-coordinate (SEC1 X-only).
+            let offset = batch_idx * batch_size * 32;
             writer
                 .write_block(offset, &block[..block_len])
                 .map_err(FindError::Io)?;
@@ -984,21 +1001,6 @@ pub fn precompute_chunk<W: CacheWriter>(
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/// Fixed maximum batch size used throughout the search engine.
-///
-/// All hot-path arrays are stack-allocated to this size, guaranteeing O(1)
-/// space per batch regardless of the scalar range being swept.
-///
-/// This constant is intentionally equal to [`BATCH_SIZE`] and exposed as
-/// `pub` so that downstream consumers and benchmark authors can reason
-/// about the per-batch stack budget (~3 KB on x86_64:
-/// `32 × 96` bytes for [`ProjectivePoint`] + `32 × 32` bytes for the
-/// X-coordinate scratch buffer + a small [`AffinePoint`] mirror).
-///
-/// See [ADR-0002](../docs/adr/0002-batch-normalization.md) for the
-/// rationale behind the chosen size.
-pub const MAX_BATCH: usize = 32;
 
 /// Extracts the 32-byte big-endian X-coordinate from an affine point.
 ///
@@ -1142,7 +1144,7 @@ mod tests {
     fn test_perform_chunked_sweep_start_greater_than_end() {
         let target = ecc::scalar_mul_g(&Scalar::from(1u64));
         let index = VariantIndex::new(generate_variants(&target));
-        assert!(perform_chunked_sweep(&index, 100, 1).is_none());
+        assert!(perform_chunked_sweep(&index, 100, 1, 32).is_none());
     }
 
     /// Verifies that [`precompute_chunk`] returns `Ok(None)` when start > end.
@@ -1155,7 +1157,7 @@ mod tests {
             }
         }
         let progress = Progress::new();
-        let result = precompute_chunk(100, 1, &DummyWriter, None, &progress);
+        let result = precompute_chunk(100, 1, &DummyWriter, None, &progress, 32);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -1216,7 +1218,7 @@ mod tests {
         let index = VariantIndex::new(generate_variants(&target));
         let progress = Progress::new();
 
-        let result = precompute_chunk(1, 10, &NullWriter, Some(&index), &progress).unwrap();
+        let result = precompute_chunk(1, 10, &NullWriter, Some(&index), &progress, 32).unwrap();
         assert!(
             result.is_some(),
             "precompute_chunk must find match for d=3 in range [1,10]"
@@ -1251,7 +1253,7 @@ mod tests {
         // Sweep range [1, 5]: 5 scalars in 1 partial batch. The engine
         // should call `progress.add(5)` (the actual count), not
         // `progress.add(BATCH_SIZE=32)`.
-        let result = precompute_chunk(1, 5, &NullWriter, Some(&index), &progress).unwrap();
+        let result = precompute_chunk(1, 5, &NullWriter, Some(&index), &progress, 32).unwrap();
         assert!(
             result.is_none(),
             "No match expected in [1, 5] for d=1000000"

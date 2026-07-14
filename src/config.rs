@@ -75,9 +75,8 @@ pub const DEFAULT_VARIANT_COUNT: u32 = 512;
 
 /// Maximum batch size the engine can address.
 ///
-/// Bounded by the on-stack `[ProjectivePoint; MAX_BATCH]` arrays in the
-/// search hot path. Increasing this requires recompiling with new
-/// stack-array sizes.
+/// Since commit 7b the hot-path arrays are heap-allocated and sized at
+/// runtime against this cap. See ADR-0009.
 pub const MAX_BATCH_SIZE: u32 = 256;
 
 /// Maximum variant count the engine can address.
@@ -518,10 +517,7 @@ mod tests {
                 .get(),
             BatchSize::MAX
         );
-        assert_eq!(
-            cfg.try_with_batch_size(64).unwrap().batch_size.get(),
-            64
-        );
+        assert_eq!(cfg.try_with_batch_size(64).unwrap().batch_size.get(), 64);
     }
 
     /// Verifies that `BatchSize::new` rejects out-of-range values.

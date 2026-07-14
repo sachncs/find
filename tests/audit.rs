@@ -39,7 +39,7 @@ fn test_rigorous_recovery_1234567890() {
     let sweep_start: u64 = 160_826_000;
     let sweep_end: u64 = 160_827_000;
 
-    let result = search::perform_chunked_sweep(&index, sweep_start, sweep_end);
+    let result = search::perform_chunked_sweep(&index, sweep_start, sweep_end, 32);
     let m = result.expect("Sweep MUST recover the match for scalar 1234567890");
 
     assert_eq!(m.label, "2^30", "Must match via the 2^30 variant");
@@ -119,7 +119,7 @@ fn test_recovery_small_scalars() {
         let index = VariantIndex::new(search::generate_variants(&target_p));
 
         let sweep_end = known_d + 10;
-        let result = search::perform_chunked_sweep(&index, 0, sweep_end);
+        let result = search::perform_chunked_sweep(&index, 0, sweep_end, 32);
 
         let m = result.unwrap_or_else(|| panic!("Sweep MUST recover match for d={}", known_d));
 
@@ -170,7 +170,7 @@ proptest! {
         let index = VariantIndex::new(variants);
 
         // Sweep just past d so we always match.
-        let m = search::perform_chunked_sweep(&index, 0, d + 10)
+        let m = search::perform_chunked_sweep(&index, 0, d + 10, 32)
             .unwrap_or_else(|| panic!("audit must recover d={d}"));
 
         let d_hex = format!("{:x}", d);

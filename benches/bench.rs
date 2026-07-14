@@ -138,7 +138,7 @@ fn bench_end_to_end_small_scalar(c: &mut Criterion) {
         b.iter(|| {
             // The orchestrator clamps start to MIN_J = 1 internally; we
             // do the same here.
-            let m = std::hint::black_box(search::perform_chunked_sweep(&index, 1, 10_000_000));
+            let m = std::hint::black_box(search::perform_chunked_sweep(&index, 1, 10_000_000, 32));
             assert!(m.is_some(), "match must be found");
         })
     });

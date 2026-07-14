@@ -202,8 +202,14 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
             let expected_len = (chunk_end.saturating_sub(chunk_start).saturating_add(1)) * 32;
             writer.preallocate(expected_len)?;
 
-            let early =
-                search::precompute_chunk(chunk_start, chunk_end, &writer, Some(&index), &progress)?;
+            let early = search::precompute_chunk(
+                chunk_start,
+                chunk_end,
+                &writer,
+                Some(&index),
+                &progress,
+                config.batch_size.get(),
+            )?;
 
             if early.is_some() {
                 // A match was found mid-precompute; skip the redundant
@@ -214,7 +220,7 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
             }
         } else {
             info!("Cache miss. Running parallel sweep...");
-            search::perform_chunked_sweep(&index, chunk_start, chunk_end)
+            search::perform_chunked_sweep(&index, chunk_start, chunk_end, config.batch_size.get())
         };
 
         if let Some(m) = sweep_result {
