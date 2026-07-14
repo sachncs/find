@@ -133,6 +133,7 @@ pub use crate::config::SweepRange;
 /// ```
 pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
     config.validate()?;
+    config.validate_pubkey()?;
 
     let target_p = ecc::parse_pubkey(&config.pubkey)?;
     let variants = search::generate_variants(&target_p);

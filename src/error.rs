@@ -57,6 +57,7 @@ use thiserror::Error;
 ///         FindError::EccError(_) => "cryptographic",
 ///         FindError::ResearchIntegrityError(_) => "data-corruption",
 ///         FindError::InvalidPublicKey(_) => "input-rejected",
+///         FindError::InvalidConfig(_) => "input-rejected",
 ///         FindError::Io(_) => "transient",
 ///         FindError::HexError(_) => "input-rejected",
 ///         FindError::SerializationError(_) => "data-corruption",
@@ -88,6 +89,16 @@ pub enum FindError {
     /// The provided public key could not be parsed as a valid SEC1 point.
     #[error("Invalid public key format: {0}")]
     InvalidPublicKey(String),
+
+    /// A configuration value failed validation.
+    ///
+    /// Raised when a [`Config`](crate::config::Config) field is constructed
+    /// via the fallible `try_with_*` builders with a value outside its
+    /// allowed range. Recoverable only by re-issuing construction with a
+    /// value in range; the variant is intentionally non-panicking so the
+    /// CLI can surface it as a non-zero exit code.
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
 
     /// An underlying I/O operation failed.
     ///
@@ -128,6 +139,7 @@ impl Clone for FindError {
             Self::EccError(s) => Self::EccError(s.clone()),
             Self::ResearchIntegrityError(s) => Self::ResearchIntegrityError(s.clone()),
             Self::InvalidPublicKey(s) => Self::InvalidPublicKey(s.clone()),
+            Self::InvalidConfig(s) => Self::InvalidConfig(s.clone()),
             Self::Io(e) => Self::Io(std::io::Error::new(e.kind(), e.to_string())),
             Self::HexError(e) => Self::HexError(*e),
             Self::SerializationError(e) => Self::SerializationError(serde_json::Error::io(
@@ -173,6 +185,10 @@ mod tests {
         assert_eq!(
             FindError::InvalidPublicKey("bad prefix".to_string()).to_string(),
             "Invalid public key format: bad prefix"
+        );
+        assert_eq!(
+            FindError::InvalidConfig("batch_size out of range".to_string()).to_string(),
+            "Invalid configuration: batch_size out of range"
         );
         assert_eq!(
             FindError::Io(std::io::Error::new(std::io::ErrorKind::Other, "disk full")).to_string(),
@@ -254,5 +270,15 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
         assert_ne!(a, FindError::EccError("z".to_string()));
+    }
+
+    /// Verifies that [`FindError::InvalidConfig`] round-trips through [`Clone`].
+    #[test]
+    fn test_invalid_config_clone_and_eq() {
+        let a = FindError::InvalidConfig("bad batch_size".to_string());
+        let b = a.clone();
+        assert_eq!(a, b);
+        assert_ne!(a, FindError::InvalidConfig("other".to_string()));
+        assert_ne!(a, FindError::InvalidPublicKey("bad batch_size".to_string()));
     }
 }

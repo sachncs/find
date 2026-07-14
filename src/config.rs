@@ -284,7 +284,12 @@ impl Config {
         self
     }
 
-    /// Validates that all required fields are non-empty and well-formed.
+    /// Shallow-validates that all required fields are non-empty.
+    ///
+    /// This is a cheap, allocation-free check intended for use at any call
+    /// site that wants a quick sanity gate. For a deeper check that the
+    /// pubkey actually parses as a SEC1 point on secp256k1, use
+    /// [`Config::validate_pubkey`].
     ///
     /// # Errors
     ///
@@ -296,7 +301,7 @@ impl Config {
     /// ```
     /// use find::config::Config;
     ///
-    /// let ok = Config::new("0279be...", "data", false);
+    /// let ok = Config::new("02abcd", "data", false);
     /// assert!(ok.validate().is_ok());
     ///
     /// let bad = Config::new("   ", "data", false);
@@ -308,6 +313,45 @@ impl Config {
                 "Public key cannot be empty".to_string(),
             ));
         }
+        Ok(())
+    }
+
+    /// Deep-validates that the pubkey parses as a valid SEC1 point.
+    ///
+    /// This is the fail-fast version of [`Config::validate`] — it actually
+    /// decodes the hex string and runs it through
+    /// [`ecc::parse_pubkey`](crate::ecc::parse_pubkey). Use this at the
+    /// orchestrator's entry point so that a malformed pubkey is surfaced
+    /// as `Err(InvalidPublicKey(_))` rather than as a cryptic parse error
+    /// later in the session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FindError::InvalidPublicKey`] on any SEC1 parsing failure
+    /// (wrong hex encoding, wrong prefix, off-curve coordinates, etc.).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::config::Config;
+    ///
+    /// let good = Config::new(
+    ///     "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+    ///     "data",
+    ///     false,
+    /// );
+    /// assert!(good.validate_pubkey().is_ok());
+    ///
+    /// let bad = Config::new("not_hex", "data", false);
+    /// assert!(bad.validate_pubkey().is_err());
+    /// ```
+    pub fn validate_pubkey(&self) -> Result<()> {
+        if self.pubkey.trim().is_empty() {
+            return Err(FindError::InvalidPublicKey(
+                "Public key cannot be empty".to_string(),
+            ));
+        }
+        crate::ecc::parse_pubkey(&self.pubkey)?;
         Ok(())
     }
 }
@@ -335,6 +379,31 @@ mod tests {
     fn test_validate_accepts_valid_pubkey() {
         let config = Config::new("02abcd", "/tmp", false);
         assert!(config.validate().is_ok());
+    }
+
+    /// Verifies that `validate_pubkey` accepts a well-formed SEC1 pubkey.
+    #[test]
+    fn test_config_validate_pubkey_accepts_valid() {
+        let config = Config::new(
+            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            "/tmp",
+            false,
+        );
+        assert!(config.validate_pubkey().is_ok());
+    }
+
+    /// Verifies that `validate_pubkey` rejects a malformed pubkey.
+    #[test]
+    fn test_config_validate_pubkey_rejects_invalid() {
+        // Non-hex bytes.
+        let bad = Config::new("not_hex_at_all", "/tmp", false);
+        assert!(bad.validate_pubkey().is_err());
+
+        // Empty / whitespace-only.
+        let empty = Config::new("", "/tmp", false);
+        assert!(empty.validate_pubkey().is_err());
+        let ws = Config::new("   ", "/tmp", false);
+        assert!(ws.validate_pubkey().is_err());
     }
 
     /// Verifies that `SweepRange::new` clamps `start` to `MIN_J`.
