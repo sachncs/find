@@ -66,7 +66,7 @@ use thiserror::Error;
 ///     }
 /// }
 ///
-/// let e = FindError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x"));
+/// let e = FindError::Io(std::io::Error::other("x"));
 /// assert_eq!(classify(&e), "transient");
 /// ```
 #[derive(Error, Debug)]
@@ -143,7 +143,7 @@ impl Clone for FindError {
             Self::Io(e) => Self::Io(std::io::Error::new(e.kind(), e.to_string())),
             Self::HexError(e) => Self::HexError(*e),
             Self::SerializationError(e) => Self::SerializationError(serde_json::Error::io(
-                std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+                std::io::Error::other(e.to_string()),
             )),
             Self::CacheCorrupted(s) => Self::CacheCorrupted(s.clone()),
         }
@@ -191,7 +191,7 @@ mod tests {
             "Invalid configuration: batch_size out of range"
         );
         assert_eq!(
-            FindError::Io(std::io::Error::new(std::io::ErrorKind::Other, "disk full")).to_string(),
+            FindError::Io(std::io::Error::other("disk full")).to_string(),
             "I/O error: disk full"
         );
         assert_eq!(
@@ -256,7 +256,7 @@ mod tests {
         let e2 = e1.clone();
         assert_eq!(e1, e2);
 
-        let e3 = FindError::Io(std::io::Error::new(std::io::ErrorKind::Other, "y"));
+        let e3 = FindError::Io(std::io::Error::other("y"));
         let e4 = e3.clone();
         assert_eq!(e3, e4);
     }

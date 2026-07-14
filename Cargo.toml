@@ -2,7 +2,7 @@
 name = "find"
 version = "0.1.6"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.81"
 description = "A high-performance Rust system for secp256k1 cryptographic research and educational discovery."
 authors = ["Sachin <sachncs@gmail.com>"]
 license = "MIT"

@@ -75,7 +75,7 @@ We do **not** accept:
 
 ### Prerequisites
 
-- Rust 1.70 or later (install via [rustup](https://rustup.rs/))
+- Rust 1.81 or later (install via [rustup](https://rustup.rs/))
 - `cargo-tarpaulin` for coverage (optional)
 - `cargo-audit` for security checks (optional)
 

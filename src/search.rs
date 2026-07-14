@@ -754,7 +754,7 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
 /// use find::search::{compute_variant_x_bytes, generate_variants, perform_chunked_sweep, VariantIndex};
 /// use k256::Scalar;
 ///
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// fn main() -> Result<(), Box<dyn core::error::Error>> {
 ///     let target = ecc::scalar_mul_g(&Scalar::from(12345u64));
 ///     let variants = generate_variants(&target);
 ///     let x_bytes = compute_variant_x_bytes(&target);

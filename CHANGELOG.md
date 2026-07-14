@@ -102,6 +102,15 @@ commit and its commit timestamp.
   surface (commit 7b). The constant was redundant once the hot-path
   arrays moved to heap allocation.
 
+### Changed
+
+- **MSRV bumped from 1.70 to 1.81.** Doctest signatures using
+  `Box<dyn std::error::Error>` are migrated to the `core::error::Error`
+  spelling (stable as of 1.81). This is documented as a minor SemVer
+  bump because the prior MSRV predates `core::error::Error`. Runtime
+  behaviour is unchanged; downstream crates that pin to MSRV ≤ 1.80
+  must delay their upgrade or vendor the `core::error::Error` trait.
+
 ### Migration notes (0.1.6 → next)
 
 - `search::SearchMatch::candidates` field type changed; see commit 12.

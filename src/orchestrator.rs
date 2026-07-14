@@ -114,7 +114,7 @@ use tracing::{info, warn};
 /// use find::config::Config;
 /// use find::orchestrator;
 ///
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// fn main() -> Result<(), Box<dyn core::error::Error>> {
 ///     let cfg = Config::new(
 ///         "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
 ///         "data",

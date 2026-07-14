@@ -64,7 +64,7 @@ use tracing_subscriber::prelude::*;
 /// ```no_run
 /// use find::telemetry::init_tracing;
 ///
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// fn main() -> Result<(), Box<dyn core::error::Error>> {
 ///     // Hold the guard for the whole program lifetime.
 ///     let _guard = init_tracing("logs")?;
 ///     tracing::info!("tracing initialised");

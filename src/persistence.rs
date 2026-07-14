@@ -276,7 +276,7 @@ impl FileCacheWriter {
     /// use find::persistence::FileCacheWriter;
     /// use std::path::Path;
     ///
-    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// fn main() -> Result<(), Box<dyn core::error::Error>> {
     ///     let writer = FileCacheWriter::create(Path::new("data/chunk_1.bin"))?;
     ///     let block = [0u8; 32 * 32]; // one batch of 32 X-coordinates
     ///     find::search::CacheWriter::write_block(&writer, 0, &block)?;
@@ -478,7 +478,7 @@ pub fn perform_cached_sweep(
 /// use find::search;
 /// use k256::Scalar;
 ///
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// fn main() -> Result<(), Box<dyn core::error::Error>> {
 ///     let target = ecc::scalar_mul_g(&Scalar::from(123u64));
 ///     let variants = search::generate_variants(&target);
 ///     let x_bytes = search::compute_variant_x_bytes(&target);
