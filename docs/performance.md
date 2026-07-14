@@ -118,6 +118,31 @@ The following are common performance anti-patterns that the tool's design avoids
 - **Globally synchronized progress reporting.** The `Progress` counter uses `Relaxed` ordering; the value is informational only.
 - **Synchronous log writes.** The non-blocking `tracing_appender` decouples log I/O from the CPU path.
 
+## Inner-loop cycle breakdown
+
+The hot loop in `precompute_chunk` / `perform_chunked_sweep` spends its cycles across five distinct operations:
+
+| Operation | Per-batch cost | Notes |
+|---|---|---|
+| `scalar_mul_g(chunk_start)` (bootstrap) | ~256 field mults | One per batch |
+| `current += generator()` (`+G` chain) | ~12 field mults | `count - 1` per batch |
+| `batch_normalize(&points[..count])` | 1 inversion + ~6·count mults | Montgomery |
+| `affine_x_bytes(affine)` | ~1 µs | Direct `AffineCoordinates::x()` |
+| `index.match_x(&x_bytes, j)` | ~10 ns | Binary search in 16 KiB keys array |
+
+The dominant cost is the **bootstrap scalar multiplication** in step 1, not the `+G` chain. For a typical 32-point batch the bootstrap takes ~80% of the time; the chain + normalize + match together take the remaining 20%. This means increasing `BATCH_SIZE` beyond ~64 has diminishing returns — the per-batch cost is dominated by the single bootstrap mul, not by the per-point chain.
+
+## Optimization decisions
+
+See [optimization-decisions/](optimization-decisions/) for the rationale behind each optimization in the current implementation:
+
+- `0001-affinepoint-x-direct.md` — replacing `to_encoded_point` + `EncodedPoint::x()` with `AffineCoordinates::x()`
+- `0002-variant-labels-once-lock.md` — caching `format!`-built labels in `OnceLock`
+- `0003-packed-variant-index.md` — splitting `VariantIndex` into `keys + order` arrays
+- `0004-atomic-flag-early-exit.md` — replacing per-batch `Mutex::lock` with an `AtomicBool` fast-path
+- `0005-cached-sweep-stack-buffer.md` — `perform_cached_sweep` over a 32 KiB stack scratch buffer
+- `0006-u256-decimal-no-biguint.md` — direct 256-bit divmod-by-10 instead of `BigUint::to_string`
+
 ## Profiling
 
 For a one-shot profile of a representative run:
