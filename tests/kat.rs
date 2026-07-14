@@ -139,3 +139,45 @@ fn kat_x_bytes_boundary() {
         let _ = x;
     }
 }
+
+/// Cross-checks `to_hex_x` against `hex::encode(x_bytes(...))` for every
+/// scalar in `1..=1000`. Asserts that the lower-level X-byte extraction
+/// and the higher-level hex-string formatting never disagree, which would
+/// catch any future drift in the encoding pipeline.
+#[test]
+fn kat_to_hex_x_matches_x_bytes_hex() {
+    use k256::Scalar;
+    for d in 1u64..=1000u64 {
+        let p = ecc::scalar_mul_g(&Scalar::from(d));
+        let hex_from_to_hex_x = ecc::to_hex_x(&p);
+        let bytes = ecc::x_bytes(&p).expect("non-identity point");
+        let hex_from_x_bytes = hex::encode(bytes);
+        assert_eq!(
+            hex_from_to_hex_x, hex_from_x_bytes,
+            "to_hex_x / x_bytes drift at d = {d}"
+        );
+    }
+}
+
+/// Property version of `kat_to_hex_x_matches_x_bytes_hex` for 100 random
+/// scalars in `[1, 1_000_000]`. Catches any drift that the fixed-range
+/// coverage above might miss (e.g. at boundaries of field / curve-order
+/// reduction).
+#[cfg(test)]
+mod prop_to_hex_x {
+    use find::ecc;
+    use k256::Scalar;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn equals_x_bytes_hex(d in 1u64..1_000_000u64) {
+            let p = ecc::scalar_mul_g(&Scalar::from(d));
+            let hex_a = ecc::to_hex_x(&p);
+            let bytes = ecc::x_bytes(&p).expect("non-identity point");
+            let hex_b = hex::encode(bytes);
+            prop_assert_eq!(hex_a, hex_b);
+        }
+    }
+}
