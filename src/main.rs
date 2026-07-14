@@ -161,7 +161,7 @@ mod tests {
             "2^10",
             "1024",
             42,
-            vec!["1066".to_string(), "982".to_string()],
+            ["1066".to_string(), "982".to_string()],
         );
         // The function writes to stdout; we just verify it doesn't panic.
         render_success_report(m, std::time::Duration::from_secs(5));

@@ -219,7 +219,7 @@ impl VariantIndex {
                     label: var.label.clone(),
                     offset: var.offset.clone(),
                     small_scalar: j,
-                    candidates: vec![scalar_to_hex_trimmed(&c1), scalar_to_hex_trimmed(&c2)],
+                    candidates: [scalar_to_hex_trimmed(&c1), scalar_to_hex_trimmed(&c2)],
                 }
             })
     }
@@ -247,6 +247,14 @@ impl VariantIndex {
 }
 
 /// The outcome of a successful match during a search sweep.
+///
+/// `candidates` is a fixed-size two-element array (`[V + j, V - j] mod n`)
+/// because every match produces exactly two Y-parity candidates. Using
+/// `[String; 2]` instead of `Vec<String>` removes the heap allocation
+/// that previously accompanied every match — matches are infrequent
+/// (one per session in the typical case) but the savings also reduce
+/// the `SearchMatch` size from 56 to 32 bytes, which matters when
+/// callers hold the struct on the stack across hot paths.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct SearchMatch {
@@ -256,8 +264,10 @@ pub struct SearchMatch {
     pub offset: String,
     /// The scalar \(j\) at which the match occurred.
     pub small_scalar: u64,
-    /// Hex-encoded candidate private keys derived from \(V \pm j\).
-    pub candidates: Vec<String>,
+    /// Hex-encoded candidate private keys `[V + j, V - j] (mod n)`.
+    ///
+    /// Two-element array by construction; see [ADR-0007](../docs/adr/0007-y-parity-ambiguity.md).
+    pub candidates: [String; 2],
 }
 
 impl SearchMatch {
@@ -276,7 +286,11 @@ impl SearchMatch {
     ///     "2^0",
     ///     "1",
     ///     2,
-    ///     vec!["3".to_string(), "fffffffffffffffffffffffffffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140".to_string()],
+    ///     [
+    ///         "03".to_string(),
+    ///         // n - 1: V - j mod n where V = 1, j = 2.
+    ///         "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140".to_string(),
+    ///     ],
     /// );
     /// assert_eq!(m.small_scalar, 2);
     /// assert_eq!(m.label, "2^0");
@@ -285,7 +299,7 @@ impl SearchMatch {
         label: impl Into<String>,
         offset: impl Into<String>,
         small_scalar: u64,
-        candidates: Vec<String>,
+        candidates: [String; 2],
     ) -> Self {
         Self {
             label: label.into(),
@@ -293,6 +307,15 @@ impl SearchMatch {
             small_scalar,
             candidates,
         }
+    }
+
+    /// Borrows the candidate private keys as a slice.
+    ///
+    /// Provided for API ergonomics — callers that want to iterate over
+    /// both candidates uniformly can use `.as_slice()` rather than
+    /// indexing into the array directly.
+    pub fn candidates(&self) -> &[String; 2] {
+        &self.candidates
     }
 
     /// Converts the hex-encoded candidates to `Scalar` values for downstream
@@ -314,28 +337,37 @@ impl SearchMatch {
     ///     "2^0",
     ///     "1",
     ///     2,
-    ///     vec!["03".to_string()],
+    ///     [
+    ///         "03".to_string(),
+    ///         // n - 1, the curve order minus one; ensures the second
+    ///         // candidate is a valid scalar (V - j = 1 - 2 = -1 mod n).
+    ///         "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140".to_string(),
+    ///     ],
     /// );
     /// let scalars = m.candidates_as_scalars().unwrap();
     /// assert_eq!(scalars[0], Scalar::from(3u64));
     /// ```
-    pub fn candidates_as_scalars(&self) -> Result<Vec<Scalar>> {
-        self.candidates
-            .iter()
-            .map(|hex_str| {
-                use k256::elliptic_curve::PrimeField;
-                let bytes = hex::decode(hex_str)
-                    .map_err(|e| FindError::EccError(format!("hex decode failed: {}", e)))?;
-                let mut fixed_bytes = [0u8; 32];
-                let len = bytes.len().min(32);
-                let src = &bytes[..len];
-                fixed_bytes[32 - src.len()..].copy_from_slice(src);
-                Option::from(Scalar::from_repr(fixed_bytes.into())).ok_or_else(|| {
-                    FindError::EccError(format!("Scalar {} exceeds curve order n", hex_str))
-                })
-            })
-            .collect()
+    pub fn candidates_as_scalars(&self) -> Result<[Scalar; 2]> {
+        let [a, b] = &self.candidates;
+        let sa = hex_str_to_scalar(a)?;
+        let sb = hex_str_to_scalar(b)?;
+        Ok([sa, sb])
     }
+}
+
+/// Converts a hex-encoded scalar string to a [`Scalar`].
+///
+/// Helper used by [`SearchMatch::candidates_as_scalars`].
+fn hex_str_to_scalar(hex_str: &str) -> Result<Scalar> {
+    use k256::elliptic_curve::PrimeField;
+    let bytes = hex::decode(hex_str)
+        .map_err(|e| FindError::EccError(format!("hex decode failed: {}", e)))?;
+    let mut fixed_bytes = [0u8; 32];
+    let len = bytes.len().min(32);
+    let src = &bytes[..len];
+    fixed_bytes[32 - src.len()..].copy_from_slice(src);
+    Option::from(Scalar::from_repr(fixed_bytes.into()))
+        .ok_or_else(|| FindError::EccError(format!("Scalar {} exceeds curve order n", hex_str)))
 }
 
 /// A thread-safe progress counter for cache generation.
