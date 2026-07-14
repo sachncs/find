@@ -45,7 +45,8 @@ fn test_mandatory_random_6_to_8_digits() {
     let target_p = ecc::scalar_mul_g(&target_scalar);
 
     let variants = search::generate_variants(&target_p);
-    let index = VariantIndex::new(variants);
+    let x_bytes = search::compute_variant_x_bytes(&target_p);
+    let index = VariantIndex::new(variants, &x_bytes);
 
     let result = search::perform_chunked_sweep(&index, j, j, 32);
     assert!(result.is_some(), "Match not found for 6-8 digit scalar");
@@ -108,7 +109,8 @@ proptest! {
         let target_scalar = biguint_to_scalar(&d_val);
         let target_p = ecc::scalar_mul_g(&target_scalar);
         let variants = search::generate_variants(&target_p);
-        let index = VariantIndex::new(variants);
+        let x_bytes = search::compute_variant_x_bytes(&target_p);
+        let index = VariantIndex::new(variants, &x_bytes);
 
     let result = search::perform_chunked_sweep(&index, j, j, 32);
         prop_assert!(result.is_some());
@@ -138,7 +140,8 @@ proptest! {
         let d = 7u64;
         let target_p = ecc::scalar_mul_g(&k256::Scalar::from(d));
         let variants = search::generate_variants(&target_p);
-        let index = VariantIndex::new(variants);
+        let x_bytes = search::compute_variant_x_bytes(&target_p);
+        let index = VariantIndex::new(variants, &x_bytes);
 
         // Sweep a tight range so the test completes quickly even with
         // batch_size = 1.
@@ -178,7 +181,8 @@ proptest! {
 
     let target_p = ecc::scalar_mul_g(&k256::Scalar::from(d));
     let variants = generate_variants(&target_p);
-    let index = VariantIndex::new(variants);
+    let x_bytes = search::compute_variant_x_bytes(&target_p);
+    let index = VariantIndex::new(variants, &x_bytes);
 
     struct MemWriter(Mutex<Vec<u8>>);
     impl CacheWriter for MemWriter {
@@ -226,7 +230,8 @@ fn test_idempotency_deterministic_output() {
     let target_scalar = biguint_to_scalar(&d_val);
     let target_p = ecc::scalar_mul_g(&target_scalar);
     let variants = search::generate_variants(&target_p);
-    let index = VariantIndex::new(variants);
+    let x_bytes = search::compute_variant_x_bytes(&target_p);
+    let index = VariantIndex::new(variants, &x_bytes);
 
     let res1 = search::perform_chunked_sweep(&index, j, j, 32).unwrap();
     let res2 = search::perform_chunked_sweep(&index, j, j, 32).unwrap();
@@ -252,7 +257,8 @@ fn run_controlled_test(j: u64, v_power: u32, label: &str) {
     let target_scalar = biguint_to_scalar(&d_val);
     let target_p = ecc::scalar_mul_g(&target_scalar);
     let variants = search::generate_variants(&target_p);
-    let index = VariantIndex::new(variants);
+    let x_bytes = search::compute_variant_x_bytes(&target_p);
+    let index = VariantIndex::new(variants, &x_bytes);
 
     let result = search::perform_chunked_sweep(&index, j, j, 32);
     assert!(result.is_some(), "Failed boundary/edge test: {}", label);

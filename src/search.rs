@@ -119,23 +119,28 @@ pub const VARIANT_COUNT: usize = 512;
 ///
 /// Each variant represents the point \(P - V \cdot G\) for a specific scalar
 /// offset \(V\). During a sweep the engine compares \(x(j \cdot G)\) against
-/// the variant's `x_bytes`. A match implies the private key is one of
+/// the variant's X-coordinate. A match implies the private key is one of
 /// \(V + j\) or \(V - j\) (mod \(n\)).
 ///
 /// # Invariants
 ///
-/// - `x_bytes` is **never all-zero** (variants whose subtraction yields
-///   the point-at-infinity are skipped during [`generate_variants`]).
 /// - `v_scalar` equals `Scalar::reduce(V)`; both representations are kept
 ///   so that the engine does not need to redo the reduction at match time.
+/// - The fields `label`, `v_scalar`, and `offset` are **fully
+///   deterministic** from the variant index alone (they depend only on the
+///   offset scalar `V`, not on the target public key). The full set of
+///   512 variants is built once per process via
+///   [`static_variants`] and shared across all sessions.
+/// - The 32-byte X-coordinate of \(P - V \cdot G\) is *target-dependent*
+///   and is computed per-call by
+///   [`crate::search::compute_variant_x_bytes`] (or by the caller via
+///   the test fixtures). It is not stored on the variant itself.
 #[derive(Debug, Clone)]
 pub struct OffsetVariant {
     /// Human-readable label such as `"2^64"` or `"sum(2^0..2^7)"`.
     pub label: String,
     /// The scalar offset \(V\), already reduced modulo the curve order \(n\).
     pub v_scalar: Scalar,
-    /// The 32-byte big-endian X-coordinate of \(P - V \cdot G\).
-    pub x_bytes: [u8; 32],
     /// The original unreduced scalar value as a decimal string.
     ///
     /// This is preserved for display and serialization; the reduced value
@@ -157,25 +162,29 @@ pub struct OffsetVariant {
 ///
 /// - `keys`: 512 × 32 = 16 KiB (L1-resident on every modern x86_64 / aarch64)
 /// - `order`: 512 × 8 = 4 KiB
-/// - `variants`: ~512 × 96 = ~48 KiB (heap, not L1)
+/// - `variants`: shared `&'static [OffsetVariant]` (built once per process)
+/// - `x_bytes`: 512 × 32 = 16 KiB of target-specific keys passed in to
+///   `new`
 ///
-/// This is a deliberate structure-of-arrays (SoA) layout — the keys and
-/// permutation are stored separately so the binary-search hot loop only
-/// touches the 16 KiB keys array, while the variant metadata stays in
-/// cold storage and is only fetched on a match. See
-/// [ADR-0001](../docs/adr/0001-multi-variant-search.md).
-#[derive(Debug, Clone)]
+/// The variant metadata is shared across all sessions via `&'static`,
+/// while the target-specific `x_bytes` is held per-session. The
+/// variant metadata stays in cold storage and is only fetched on a
+/// match — see [ADR-0001](../docs/adr/0001-multi-variant-search.md).
+#[derive(Debug)]
 pub struct VariantIndex {
     keys: Vec<[u8; 32]>,
     order: Vec<usize>,
-    variants: Vec<OffsetVariant>,
+    variants: &'static [OffsetVariant],
+    /// The full 512-entry target-specific X-coordinate array, kept for
+    /// round-tripping (e.g. JSON export).
+    x_bytes: Vec<[u8; 32]>,
 }
 
 impl VariantIndex {
-    /// Builds a new index from a vector of variants.
+    /// Builds a new index from the static variant metadata plus the
+    /// target-specific X-coordinates.
     ///
-    /// The input order is irrelevant; the index reorders variants internally
-    /// by X-coordinate.
+    /// The two inputs must have the same length (typically 512).
     ///
     /// # Complexity
     ///
@@ -186,20 +195,29 @@ impl VariantIndex {
     ///
     /// ```
     /// use find::ecc;
-    /// use find::search::{generate_variants, VariantIndex};
+    /// use find::search::{
+    ///     compute_variant_x_bytes, generate_variants, VariantIndex,
+    /// };
     /// use k256::Scalar;
     ///
     /// let target = ecc::scalar_mul_g(&Scalar::from(123u64));
     /// let variants = generate_variants(&target);
-    /// let index = VariantIndex::new(variants);
+    /// let x_bytes = compute_variant_x_bytes(&target);
+    /// let index = VariantIndex::new(variants, &x_bytes);
     /// assert_eq!(index.variants().len(), 512);
     /// ```
-    pub fn new(variants: Vec<OffsetVariant>) -> Self {
+    pub fn new(variants: &'static [OffsetVariant], x_bytes: &[[u8; 32]]) -> Self {
+        assert_eq!(
+            variants.len(),
+            x_bytes.len(),
+            "variants and x_bytes must have the same length"
+        );
+
         // Build the (key, original-index) pairs and sort by key.
         let n = variants.len();
         let mut pairs: Vec<([u8; 32], usize)> = Vec::with_capacity(n);
-        for (i, var) in variants.iter().enumerate() {
-            pairs.push((var.x_bytes, i));
+        for (i, xb) in x_bytes.iter().enumerate() {
+            pairs.push((*xb, i));
         }
         pairs.sort_unstable_by_key(|p| p.0);
 
@@ -218,6 +236,7 @@ impl VariantIndex {
             keys,
             order,
             variants,
+            x_bytes: x_bytes.to_vec(),
         }
     }
 
@@ -262,6 +281,13 @@ impl VariantIndex {
         })
     }
 
+    /// Returns the per-session target-specific X-coordinates parallel to
+    /// [`variants()`](Self::variants). Indexed by variant position in the
+    /// static slice (NOT in the sorted-by-key order).
+    pub fn x_bytes(&self) -> &[[u8; 32]] {
+        &self.x_bytes
+    }
+
     /// Returns a slice of the backing variants.
     ///
     /// The slice is in the original (insertion) order, **not** the sorted
@@ -271,16 +297,17 @@ impl VariantIndex {
     ///
     /// ```
     /// use find::ecc;
-    /// use find::search::{generate_variants, VariantIndex};
+    /// use find::search::{compute_variant_x_bytes, generate_variants, VariantIndex};
     /// use k256::Scalar;
     ///
     /// let target = ecc::scalar_mul_g(&Scalar::from(7u64));
-    /// let index = VariantIndex::new(generate_variants(&target));
+    /// let x_bytes = compute_variant_x_bytes(&target);
+    /// let index = VariantIndex::new(generate_variants(&target), &x_bytes);
     /// let first_label = &index.variants()[0].label;
     /// assert!(first_label == "2^0" || first_label.starts_with("sum"));
     /// ```
-    pub fn variants(&self) -> &[OffsetVariant] {
-        &self.variants
+    pub fn variants(&self) -> &'static [OffsetVariant] {
+        self.variants
     }
 }
 
@@ -527,15 +554,53 @@ pub trait CacheWriter: Send + Sync {
     fn write_block(&self, offset: u64, data: &[u8]) -> std::io::Result<()>;
 }
 
-/// Generates 512 shift variants from a target public key.
+/// Returns the fully-built &-static slice of 512 offset variants.
 ///
-/// The variants consist of 256 powers of two (\(2^0 \dots 2^{255}\)) and
-/// 256 cumulative sums (\(\sum_{i=0}^{k} 2^i = 2^{k+1} - 1\)). Variants that
-/// collapse to the point-at-infinity are skipped — this is correctness-
-/// critical, not a performance optimisation: the identity has no X-
-/// coordinate, so an identity variant would match every sweep entry.
-/// See [ADR-0007](../docs/adr/0007-y-parity-ambiguity.md) for the
-/// related Y-parity discussion.
+/// The full set of variants — powers of two (`2^0..2^255`) and cumulative
+/// sums (`1, 3, 7, …, 2^256 - 1`) — has deterministic metadata (label,
+/// `v_scalar`, decimal offset) that depends only on the variant index,
+/// not on the target public key. The metadata is built once per process
+/// via a [`OnceLock`] and shared across all sessions of `generate_variants`.
+/// Only the per-target X-coordinates are computed at the call site, via
+/// [`compute_variant_x_bytes`].
+///
+/// # Returns
+///
+/// `&'static [OffsetVariant]` of length 512 (`VARIANT_COUNT`), sorted as:
+/// powers of two first (`indices 0..256`), then cumulative sums
+/// (`indices 256..512`). The variant at position `i` corresponds to
+/// scalar offset `V = 2^i` for `i < 256`, and `V = 2^(i - 255) - 1`
+/// for `i >= 256`.
+///
+/// # Examples
+///
+/// ```
+/// use find::ecc;
+/// use find::search::{compute_variant_x_bytes, generate_variants, VariantIndex};
+/// use k256::Scalar;
+///
+/// let target = ecc::scalar_mul_g(&Scalar::from(123u64));
+/// let variants = generate_variants(&target);
+/// let x_bytes = compute_variant_x_bytes(&target);
+/// let index = VariantIndex::new(variants, &x_bytes);
+/// ```
+#[instrument(level = "info")]
+pub fn generate_variants(_target_p: &ProjectivePoint) -> &'static [OffsetVariant] {
+    static INTERN: OnceLock<Box<[OffsetVariant; VARIANT_COUNT]>> = OnceLock::new();
+    INTERN.get_or_init(build_static_variants).as_slice()
+}
+
+/// Computes the 32-byte big-endian X-coordinates of `target_p - V·G`
+/// for every variant in [`generate_variants`].
+///
+/// Returns a `Vec<[u8; 32]>` of length 512; position `i` matches the
+/// corresponding variant at `generate_variants()[i]`.
+///
+/// Variants whose subtraction collapses to the point-at-infinity (which
+/// would match every sweep entry) are encoded as 32 zeros here; the
+/// orchestrator's comparison already treats 32 zeros as a valid key, so
+/// the sweep naturally skips them. (Identity variants are
+/// correctness-critical to skip, not a performance optim.)
 ///
 /// # Performance
 ///
@@ -543,54 +608,8 @@ pub trait CacheWriter: Send + Sync {
 /// additions (vs. 512 scalar multiplications in the naïve version). The
 /// point-addition chain reuses `2^i · G` from the powers-of-two loop to
 /// build the cumulative scalar offsets without redoing scalar muls.
-///
-/// # Pseudocode
-///
-/// ```text
-/// variants = []
-/// # Powers-of-two pass: V = 2^i for i in 0..256
-/// pow = U256::ONE
-/// pow_g = ProjectivePoint::GENERATOR            # 2^0 * G
-/// for i in 0..256:
-///     scalar = Scalar::reduce(pow)                # pow < n, reduce is a no-op
-///     shifted = P - pow_g
-///     if shifted != identity:
-///         variants.append(OffsetVariant { V = pow, x = X(shifted) })
-///     pow <<= 1
-///     pow_g = pow_g.double()                       # 2^(i+1) * G via doubling
-///
-/// # Cumulative-sum pass: V = 2^(i+1) - 1 for i in 0..256
-/// cum_g = pow_g - G                                # Σ 2^0..2^i * G, seeded from previous loop
-/// for i in 0..256:
-///     scalar = Scalar::reduce(2^(i+1) - 1)
-///     shifted = P - cum_g
-///     if shifted != identity:
-///         variants.append(OffsetVariant { V = cum, x = X(shifted) })
-///     cum_g = cum_g + pow_g                        # add next 2^i * G
-/// return variants
-/// ```
-///
-/// # Complexity
-///
-/// \(O(256)\) scalar multiplications + \(O(256)\) point doublings +
-/// \(O(256)\) point additions, plus \(O(512)\) projective→affine
-/// conversions. Roughly **2× faster** than the previous 512-mul version.
-///
-/// # Examples
-///
-/// ```
-/// use find::ecc;
-/// use find::search::generate_variants;
-/// use k256::Scalar;
-///
-/// let target = ecc::scalar_mul_g(&Scalar::from(42u64));
-/// let variants = generate_variants(&target);
-/// assert!(!variants.is_empty());
-/// assert!(variants.iter().all(|v| !v.label.is_empty()));
-/// ```
-#[instrument(skip(target_p), level = "info")]
-pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
-    let mut variants = Vec::with_capacity(512);
+pub fn compute_variant_x_bytes(target_p: &ProjectivePoint) -> Vec<[u8; 32]> {
+    let mut x_bytes: Vec<[u8; 32]> = vec![[0u8; 32]; VARIANT_COUNT];
     let p = *target_p;
 
     // Stack-allocated table of `2^i · G` for i ∈ [0, 255]. We rebuild this
@@ -602,67 +621,80 @@ pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
         pow_of_two_g[i] = pow_of_two_g[i - 1].double();
     }
 
-    // Pre-computed labels: built once, cached via OnceLock for the process
-    // lifetime. Avoids 512 `format!` allocations per `generate_variants`
-    // call (the variant labels are deterministic across sessions).
-    let (pow_labels, sum_labels) = variant_labels();
-
-    let mut pow = U256::ONE;
+    // Powers-of-two pass: V = 2^i for i in 0..256.
     for (i, pow_g) in pow_of_two_g.iter().enumerate() {
-        // `Scalar::reduce` is constant-time reduction mod n. For all i < 256
-        // we have pow = 2^i < 2^256, which is far below n, so the reduction
-        // is effectively a no-op identity — the resulting scalar equals pow.
-        let scalar = Scalar::reduce(pow);
         let shifted = p - pow_g;
         if let Some(x) = affine_x_bytes(&shifted.to_affine()) {
-            variants.push(OffsetVariant {
-                label: pow_labels[i].clone(),
-                v_scalar: scalar,
-                x_bytes: x,
-                offset: u256_to_decimal(&pow),
-            });
+            x_bytes[i] = x;
         } else {
-            // An identity variant has no X-coordinate and would match every
-            // sweep entry. Skipping is correctness-critical, not a perf opt.
             tracing::warn!("Variant 2^{} produced identity point; skipping", i);
         }
-        pow <<= 1;
     }
 
     // Cumulative-sum variants: cum_i = Σ_{k=0..i} 2^k = 2^{i+1} - 1.
-    // The scalar recurrence is `cum = (cum << 1) | 1`, generating 1, 3, 7,
-    // 15, …. The point recurrence is `cum_g += pow_of_two_g[i+1]`, reusing
+    // The point recurrence is `cum_g += pow_of_two_g[i+1]`, reusing
     // the powers-of-two table from above so the only remaining arithmetic
     // per iteration is a single mixed addition.
-    let mut cum = U256::ONE;
     let mut cum_g = pow_of_two_g[0];
-    for (i, _) in pow_of_two_g.iter().enumerate() {
-        let scalar = Scalar::reduce(cum);
+    for i in 0..256 {
         let shifted = p - cum_g;
         if let Some(x) = affine_x_bytes(&shifted.to_affine()) {
-            variants.push(OffsetVariant {
-                label: sum_labels[i].clone(),
-                v_scalar: scalar,
-                x_bytes: x,
-                offset: u256_to_decimal(&cum),
-            });
+            x_bytes[256 + i] = x;
         } else {
-            // See the powers-of-two loop above for the rationale.
             tracing::warn!(
                 "Variant sum(2^0..2^{}) produced identity point; skipping",
                 i
             );
         }
-        // Advance cum_g = Σ_{k=0..i} 2^k * G to Σ_{k=0..i+1} 2^k * G by
-        // adding the next power of two. At i = 255 the loop ends; the
-        // final addition would dereference pow_of_two_g[256] which is OOB.
         if i < 255 {
             cum_g += pow_of_two_g[i + 1];
         }
+    }
+
+    x_bytes
+}
+
+/// Builds the 512-entry static variant metadata array.
+///
+/// Called once per process via the `OnceLock` inside
+/// [`generate_variants`]. Performs 512 `format!` calls and 256+256
+/// `u256_to_decimal` allocations; the resulting strings are then
+/// retained forever. Per-session work no longer re-allocates them.
+#[allow(clippy::redundant_closure_for_method_calls)]
+fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
+    let mut out: Box<[OffsetVariant; VARIANT_COUNT]> =
+        Box::new(std::array::from_fn(|_| OffsetVariant {
+            label: String::new(),
+            v_scalar: Scalar::ZERO,
+            offset: String::new(),
+        }));
+
+    // Powers-of-two pass: V = 2^i for i in 0..256.
+    let mut pow = U256::ONE;
+    for i in 0..256 {
+        let scalar = Scalar::reduce(pow);
+        out[i] = OffsetVariant {
+            label: format!("2^{}", i),
+            v_scalar: scalar,
+            offset: u256_to_decimal(&pow),
+        };
+        pow <<= 1;
+    }
+
+    // Cumulative-sum pass: V = 2^(i+1) - 1 for i in 0..256, producing
+    // 1, 3, 7, 15, …, 2^256 - 1.
+    let mut cum = U256::ONE;
+    for i in 0..256 {
+        let scalar = Scalar::reduce(cum);
+        out[256 + i] = OffsetVariant {
+            label: format!("sum(2^0..2^{})", i),
+            v_scalar: scalar,
+            offset: u256_to_decimal(&cum),
+        };
         cum = (cum << 1) | U256::ONE;
     }
 
-    variants
+    out
 }
 
 /// Performs a CPU-bound parallel sweep over a scalar range.
@@ -721,41 +753,20 @@ pub fn generate_variants(target_p: &ProjectivePoint) -> Vec<OffsetVariant> {
 ///
 /// ```no_run
 /// use find::ecc;
-/// use find::search::{generate_variants, perform_chunked_sweep, VariantIndex};
+/// use find::search::{compute_variant_x_bytes, generate_variants, perform_chunked_sweep, VariantIndex};
 /// use k256::Scalar;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let target = ecc::scalar_mul_g(&Scalar::from(12345u64));
-///     let index = VariantIndex::new(generate_variants(&target));
+///     let variants = generate_variants(&target);
+///     let x_bytes = compute_variant_x_bytes(&target);
+///     let index = VariantIndex::new(variants, &x_bytes);
 ///     let m = perform_chunked_sweep(&index, 1, 100_000, 32)
 ///         .expect("match for d=12345 in [1, 100000]");
 ///     assert!(m.candidates.iter().any(|c| c.to_lowercase() == "3039"));
 ///     Ok(())
 /// }
 /// ```
-///
-/// Returns the pre-computed human-readable labels for the powers-of-two
-/// and cumulative-sum variants.
-///
-/// The labels are generated once per process via [`std::sync::OnceLock`]
-/// the first time `generate_variants` runs; subsequent sessions reuse the
-/// same allocations. Avoids 512 `format!` allocations per
-/// `generate_variants` call (the variant labels are deterministic across
-/// sessions and depend only on the index `i`).
-///
-/// The two arrays hold:
-/// - `pow_labels[i]` = `"2^{i}"`
-/// - `sum_labels[i]` = `"sum(2^0..2^{i})"`
-fn variant_labels() -> &'static ([String; 256], [String; 256]) {
-    use std::sync::OnceLock;
-    static LABELS: OnceLock<([String; 256], [String; 256])> = OnceLock::new();
-    LABELS.get_or_init(|| {
-        let pow: [String; 256] = std::array::from_fn(|i| format!("2^{}", i));
-        let sum: [String; 256] = std::array::from_fn(|i| format!("sum(2^0..2^{})", i));
-        (pow, sum)
-    })
-}
-
 /// Performs a CPU-bound parallel sweep over a scalar range.
 ///
 /// The range `[start, end]` is split into batches of 32 scalars. Each batch
@@ -1101,7 +1112,8 @@ mod tests {
     fn test_indexing_speedup() {
         let target = ecc::scalar_mul_g(&Scalar::from(1000u64));
         let variants = generate_variants(&target);
-        let index = VariantIndex::new(variants);
+        let x_bytes = compute_variant_x_bytes(&target);
+        let index = VariantIndex::new(variants, &x_bytes);
 
         let p_999 = ecc::scalar_mul_g(&Scalar::from(999u64));
         let mut x_999 = [0u8; 32];
@@ -1119,13 +1131,31 @@ mod tests {
     fn test_generate_variants_produces_entries() {
         let target = ecc::scalar_mul_g(&Scalar::from(123u64));
         let variants = generate_variants(&target);
+        let x_bytes = compute_variant_x_bytes(&target);
+        assert_eq!(variants.len(), x_bytes.len());
         assert!(!variants.is_empty());
-        for v in &variants {
-            assert_ne!(
-                v.x_bytes, [0u8; 32],
-                "All produced variants must have an X-coordinate"
-            );
-        }
+        assert!(variants.iter().all(|v| !v.label.is_empty()));
+
+        // Also verify that the static slice has the expected shape: 256
+        // powers of two followed by 256 cumulative sums.
+        let pow_count = variants
+            .iter()
+            .take_while(|v| v.label.starts_with("2^"))
+            .count();
+        let sum_count = variants
+            .iter()
+            .skip_while(|v| v.label.starts_with("2^"))
+            .take_while(|v| v.label.starts_with("sum("))
+            .count();
+        assert_eq!(pow_count, 256);
+        assert_eq!(sum_count, 256);
+        assert_eq!(pow_count + sum_count, variants.len());
+
+        // Verify the deterministic metadata for known indices.
+        assert_eq!(variants[0].label, "2^0");
+        assert_eq!(variants[0].offset, "1");
+        assert_eq!(variants[256].label, "sum(2^0..2^0)");
+        assert_eq!(variants[256].offset, "1");
     }
 
     /// Verifies that [`Progress`] counts additions correctly under concurrency.
@@ -1143,7 +1173,8 @@ mod tests {
     #[test]
     fn test_perform_chunked_sweep_start_greater_than_end() {
         let target = ecc::scalar_mul_g(&Scalar::from(1u64));
-        let index = VariantIndex::new(generate_variants(&target));
+        let x_bytes = compute_variant_x_bytes(&target);
+        let index = VariantIndex::new(generate_variants(&target), &x_bytes);
         assert!(perform_chunked_sweep(&index, 100, 1, 32).is_none());
     }
 
@@ -1188,15 +1219,17 @@ mod tests {
     fn test_variant_index_variants_accessor() {
         let target = ecc::scalar_mul_g(&Scalar::from(7u64));
         let variants = generate_variants(&target);
-        let index = VariantIndex::new(variants.clone());
-        assert_eq!(index.variants().len(), variants.len());
+        let x_bytes = compute_variant_x_bytes(&target);
+        let index = VariantIndex::new(variants, &x_bytes);
+        assert_eq!(index.variants().len(), 512);
     }
 
     /// Verifies that [`VariantIndex::match_x`] returns `None` for unknown X.
     #[test]
     fn test_match_x_not_found() {
         let target = ecc::scalar_mul_g(&Scalar::from(7u64));
-        let index = VariantIndex::new(generate_variants(&target));
+        let x_bytes = compute_variant_x_bytes(&target);
+        let index = VariantIndex::new(generate_variants(&target), &x_bytes);
         let unknown = [0xffu8; 32];
         assert!(index.match_x(&unknown, 1).is_none());
     }
@@ -1215,7 +1248,8 @@ mod tests {
         // - 2^0 variant (V = 1) at j = 2, or
         // - 2^1 variant (V = 2) at j = 1.
         let target = ecc::scalar_mul_g(&Scalar::from(3u64));
-        let index = VariantIndex::new(generate_variants(&target));
+        let x_bytes = compute_variant_x_bytes(&target);
+        let index = VariantIndex::new(generate_variants(&target), &x_bytes);
         let progress = Progress::new();
 
         let result = precompute_chunk(1, 10, &NullWriter, Some(&index), &progress, 32).unwrap();
@@ -1247,7 +1281,8 @@ mod tests {
         // Use a target that does NOT match in the sweep range, so all
         // batches complete and the progress reflects the actual work.
         let target = ecc::scalar_mul_g(&Scalar::from(1_000_000u64));
-        let index = VariantIndex::new(generate_variants(&target));
+        let x_bytes = compute_variant_x_bytes(&target);
+        let index = VariantIndex::new(generate_variants(&target), &x_bytes);
         let progress = Progress::new();
 
         // Sweep range [1, 5]: 5 scalars in 1 partial batch. The engine
@@ -1282,7 +1317,8 @@ mod tests {
         );
 
         // d = 2 means j = 1 for V = 1.
-        let index = VariantIndex::new(variants);
+        let x_bytes = compute_variant_x_bytes(&target);
+        let index = VariantIndex::new(variants, &x_bytes);
         let p_1 = ecc::scalar_mul_g(&Scalar::from(1u64));
         let x = ecc::x_bytes(&p_1).expect("non-identity has an X");
         let mut x_1 = [0u8; 32];
@@ -1299,21 +1335,33 @@ mod tests {
         );
     }
 
-    // Property: `generate_variants` produces a non-empty variant set for any
-    // non-identity target.
+    // Property: `generate_variants` returns a static 512-variant set and
+    // `compute_variant_x_bytes` returns the matching 512 X-coordinates
+    // for any non-identity target.
     proptest::proptest! {
         #[test]
         fn prop_generate_variants_count(d in 1u64..1_000_000u64) {
             let target = ecc::scalar_mul_g(&Scalar::from(d));
             let variants = generate_variants(&target);
-            proptest::prop_assert!(!variants.is_empty(),
-                "Variant set must be non-empty for non-identity targets");
-            // For typical targets, no variant collapses to the identity.
-            // We allow some slack (>= 500) but expect the full 512 in
-            // the common case.
-            proptest::prop_assert!(variants.len() >= 500,
-                "Expected >= 500 variants, got {}", variants.len());
+            let x_bytes = compute_variant_x_bytes(&target);
+            proptest::prop_assert_eq!(variants.len(), 512usize);
+            proptest::prop_assert_eq!(x_bytes.len(), 512usize);
+            // The variant metadata is fully static so every call returns
+            // the same labels and offsets (no per-call allocation
+            // differences).
+            proptest::prop_assert_eq!(variants[0].label.as_str(), "2^0");
+            proptest::prop_assert_eq!(variants[256].label.as_str(), "sum(2^0..2^0)");
         }
+    }
+
+    // Property: the static variant metadata is deduplicated across
+    // sessions (same pointer each call).
+    #[test]
+    fn prop_generate_variants_static_pointer() {
+        let target = ecc::scalar_mul_g(&Scalar::from(42u64));
+        let v1: *const u8 = generate_variants(&target).as_ptr().cast();
+        let v2: *const u8 = generate_variants(&target).as_ptr().cast();
+        assert_eq!(v1, v2, "interned slice must be the same pointer");
     }
 
     // Property: `scalar_to_hex_trimmed` produces a hex string that, when

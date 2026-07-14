@@ -476,23 +476,28 @@ pub fn perform_cached_sweep(
 /// use find::search;
 /// use k256::Scalar;
 ///
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// fn main() -> Result<(), Box<dyn std::error::Error> {
 ///     let target = ecc::scalar_mul_g(&Scalar::from(123u64));
 ///     let variants = search::generate_variants(&target);
-///     let path = save_variants_to_json(&variants, "data")?;
+///     let x_bytes = search::compute_variant_x_bytes(&target);
+///     let path = save_variants_to_json(variants, &x_bytes, "data")?;
 ///     println!("wrote {}", path);
 ///     Ok(())
 /// }
 /// ```
-#[instrument(skip(variants, dir_path), level = "info")]
-pub fn save_variants_to_json(variants: &[OffsetVariant], dir_path: &str) -> Result<String> {
+#[instrument(skip(variants, x_bytes, dir_path), level = "info")]
+pub fn save_variants_to_json(
+    variants: &[OffsetVariant],
+    x_bytes: &[[u8; 32]],
+    dir_path: &str,
+) -> Result<String> {
     // BTreeMap (not HashMap) is used so that the on-disk JSON output is
     // deterministically ordered by X-coordinate. This makes the file
     // byte-stable across runs for the same public key, which is valuable
     // for audit diffing and reproducibility checks.
     let mut map = BTreeMap::new();
-    for var in variants {
-        let x_hex = hex::encode(var.x_bytes);
+    for (var, xb) in variants.iter().zip(x_bytes.iter()) {
+        let x_hex = hex::encode(xb);
         map.insert(x_hex, var.offset.clone());
     }
 
@@ -508,7 +513,7 @@ pub fn save_variants_to_json(variants: &[OffsetVariant], dir_path: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::generate_variants;
+    use crate::search::{compute_variant_x_bytes, generate_variants};
     use k256::elliptic_curve::sec1::ToEncodedPoint;
     use k256::Scalar;
     use tempfile::tempdir;
@@ -518,10 +523,11 @@ mod tests {
     fn test_save_to_json_creates_points_file() {
         let target = crate::ecc::scalar_mul_g(&Scalar::from(100u64));
         let variants = generate_variants(&target);
+        let x_bytes = compute_variant_x_bytes(&target);
         let dir = tempdir().unwrap();
         let dir_path = dir.path().to_str().unwrap();
 
-        let res = save_variants_to_json(&variants, dir_path);
+        let res = save_variants_to_json(variants, &x_bytes, dir_path);
         assert!(res.is_ok());
         assert!(dir.path().join("points.json").exists());
     }
@@ -531,7 +537,8 @@ mod tests {
     fn test_cached_sweep_empty_file() {
         let target = crate::ecc::scalar_mul_g(&Scalar::from(1u64));
         let variants = generate_variants(&target);
-        let index = VariantIndex::new(variants);
+        let x_bytes = compute_variant_x_bytes(&target);
+        let index = VariantIndex::new(variants, &x_bytes);
 
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("empty.bin");
@@ -547,7 +554,8 @@ mod tests {
     fn test_cached_sweep_corrupted_size() {
         let target = crate::ecc::scalar_mul_g(&Scalar::from(1u64));
         let variants = generate_variants(&target);
-        let index = VariantIndex::new(variants);
+        let x_bytes = compute_variant_x_bytes(&target);
+        let index = VariantIndex::new(variants, &x_bytes);
 
         let dir = tempdir().unwrap();
         let cache_path = dir.path().join("corrupted.bin");
@@ -564,7 +572,8 @@ mod tests {
     fn test_cached_sweep_write_and_read_back() {
         let d_scalar = Scalar::from(3u64);
         let p_d = crate::ecc::scalar_mul_g(&d_scalar);
-        let index = VariantIndex::new(generate_variants(&p_d));
+        let x_bytes = compute_variant_x_bytes(&p_d);
+        let index = VariantIndex::new(generate_variants(&p_d), &x_bytes);
 
         let p_j = crate::ecc::scalar_mul_g(&Scalar::from(1u64));
         let x_1 = {

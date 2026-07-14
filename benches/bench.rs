@@ -64,7 +64,8 @@ fn bench_batch_normalization(c: &mut Criterion) {
 fn bench_index_lookup(c: &mut Criterion) {
     let p = ecc::scalar_mul_g(&Scalar::from(123456u64));
     let variants = search::generate_variants(&p);
-    let index = VariantIndex::new(variants);
+    let x_bytes = search::compute_variant_x_bytes(&p);
+    let index = VariantIndex::new(variants, &x_bytes);
 
     let target_affine = p.to_affine();
     let encoded = target_affine.to_encoded_point(false);
@@ -132,7 +133,8 @@ fn bench_end_to_end_small_scalar(c: &mut Criterion) {
     let d = 12345u64;
     let target = ecc::scalar_mul_g(&Scalar::from(d));
     let variants = search::generate_variants(&target);
-    let index = VariantIndex::new(variants);
+    let x_bytes = search::compute_variant_x_bytes(&target);
+    let index = VariantIndex::new(variants, &x_bytes);
 
     c.bench_function("end_to_end_small_scalar_12345", |b| {
         b.iter(|| {

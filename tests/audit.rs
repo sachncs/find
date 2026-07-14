@@ -34,7 +34,8 @@ fn test_rigorous_recovery_1234567890() {
     );
 
     let variants = search::generate_variants(&target_p);
-    let index = VariantIndex::new(variants);
+    let x_bytes = search::compute_variant_x_bytes(&target_p);
+    let index = VariantIndex::new(variants, &x_bytes);
 
     let sweep_start: u64 = 160_826_000;
     let sweep_end: u64 = 160_827_000;
@@ -116,7 +117,8 @@ fn test_recovery_small_scalars() {
     for known_d in test_cases {
         let d_hex = BigUint::from(known_d).to_str_radix(16);
         let target_p = ecc::scalar_mul_g(&ecc::hex_to_scalar(&pad_hex(&d_hex)).unwrap());
-        let index = VariantIndex::new(search::generate_variants(&target_p));
+        let x_bytes = search::compute_variant_x_bytes(&target_p);
+        let index = VariantIndex::new(search::generate_variants(&target_p), &x_bytes);
 
         let sweep_end = known_d + 10;
         let result = search::perform_chunked_sweep(&index, 0, sweep_end, 32);
@@ -167,7 +169,8 @@ proptest! {
     fn prop_audit_recovers_any_small_scalar(d in 1u64..=10_000_000u64) {
         let target_p = ecc::scalar_mul_g(&k256::Scalar::from(d));
         let variants = search::generate_variants(&target_p);
-        let index = VariantIndex::new(variants);
+        let x_bytes = search::compute_variant_x_bytes(&target_p);
+        let index = VariantIndex::new(variants, &x_bytes);
 
         // Sweep just past d so we always match.
         let m = search::perform_chunked_sweep(&index, 0, d + 10, 32)
