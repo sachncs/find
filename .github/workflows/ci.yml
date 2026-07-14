@@ -36,6 +36,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Install rust-src for miri
+        run: |
+          rustup component add rust-src --toolchain nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-miri-nightly
+      - run: cargo +nightly miri setup
+      - name: Run miri on the whole workspace
+        # Required-for-merge: any miri failure fails the build. See
+        # CONTRIBUTING.md (\"Unsafe-code changes must pass miri\").
+        run: cargo +nightly miri test --workspace --all-features
+
   test:
     name: Test
     strategy:
