@@ -25,12 +25,13 @@ Before creating a release, verify:
 
 - [ ] All tests pass: `make test`
 - [ ] Linting passes: `make lint`
-- [ ] Benchmarks are healthy: `make bench` shows no regressions
-- [ ] Documentation is up to date: `docs/README.md` is the index, and all cross-doc links resolve
-- [ ] [CHANGELOG.md](../../CHANGELOG.md) is updated with the new version's release notes
-- [ ] Version in `Cargo.toml` is correct
-- [ ] No breaking changes unless a major version bump
-- [ ] `make all` runs cleanly (lint + test + build)
+- [ ] `cargo +nightly miri test --workspace --all-features` passes (commit 9 added this as a required-for-merge CI job; re-run it locally for any PR that touched `unsafe`)
+- [ ] Benchmarks are healthy: `cargo bench --bench bench -- --baseline current -- --threshold 5` shows **no regression > 5%** (5% policy gate from commit 15)
+- [ ] Documentation is up to date: `docs/README.md` is the index; `docs/architecture.md` + `docs/algorithms.md` + `docs/modules.md` are accurate; all cross-doc links resolve (the local pre-commit gate `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` will surface any broken intra-doc link)
+- [ ] [CHANGELOG.md](../../CHANGELOG.md) is updated with the new version's release notes; the `[Unreleased]` block is closed (or moved) and a fresh `[Unreleased]` placeholder is opened if desired
+- [ ] Version in `Cargo.toml` is correct (current pre-1.0 line: `0.x.y`)
+- [ ] Migration tables for any breaking API changes are up to date in `README.md` and `CHANGELOG.md`
+- [ ] `make all-checks` runs cleanly
 
 ## Release steps
 
@@ -40,15 +41,21 @@ Edit `Cargo.toml`:
 
 ```toml
 [package]
-version = "1.1.0"  # New version
+version = "0.2.0"  # New version (post-review-driven pass)
 ```
+
+The projected `v0.2.0` cut is a SemVer-minor bump from `0.1.6` even though
+several breaking API changes ship (commits 7a, 7b, 7c, 12): pre-1.0
+crates are not bound by the same major-version contract. See the
+[Migration table in `README.md`](../../README.md#migration-016--020)
+for the per-change migration recipe.
 
 ### 2. Update CHANGELOG.md
 
 Add a new section at the top of [CHANGELOG.md](../../CHANGELOG.md) following [Keep a Changelog](https://keepachangelog.com/) format:
 
 ```markdown
-## [1.1.0] - 2026-05-01
+## [0.2.0] - YYYY-MM-DD
 
 ### Added
 - New feature X
@@ -56,11 +63,19 @@ Add a new section at the top of [CHANGELOG.md](../../CHANGELOG.md) following [Ke
 ### Changed
 - Improved Y
 
-### Fixed
-- Fixed Z
-
 ### Removed
-- Removed deprecated feature W
+- Removed `SweepRange` newtype (commit 8)
+- Removed `pub const search::MAX_BATCH` (commit 7b)
+
+### Migration notes
+- See README.md#migration-016--020 for the 11 breaking changes
+  shipped in 0.1.6 -> 0.2.0:
+    * Config::batch_size: u32 -> BatchSize
+    * SearchMatch.candidates: [String; 2] -> [Scalar; 2]
+    * generate_variants -> &'static [OffsetVariant]
+    * VariantIndex::new signature change
+    * MSRV 1.70 -> 1.81
+    * (etc.)
 ```
 
 ### 3. Commit the changes

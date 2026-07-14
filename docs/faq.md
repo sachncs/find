@@ -2,7 +2,38 @@
 
 This document answers conceptual questions about the `find` tool. For operational issues, see [troubleshooting.md](troubleshooting.md). For performance tuning, see [performance.md](performance.md).
 
-## General
+## Releases
+
+### What's the difference between 0.1.6 and 0.2.0?
+
+The review-driven pass in commits 1–18 ships 11 breaking API changes,
+documented in the [Migration table in README.md](../README.md#migration-016--020).
+The biggest ones are:
+
+- `Config::batch_size` is now a `BatchSize` newtype (commit 7a); set it
+  via the fallible `Config::try_with_batch_size(...)` builder.
+- `--batch-size` is finally honoured at runtime (commit 7b); the
+  hot-path arrays are heap-allocated and sized to the runtime value.
+- `SearchMatch.candidates: [Scalar; 2]` instead of `[String; 2]`
+  (commit 12, breaking); the human-readable hex form is exposed via
+  the new `SearchMatch::candidates_hex()` accessor.
+- `find::search::generate_variants` returns `&'static [OffsetVariant]`
+  (interned via a process-wide `OnceLock`; commit 7c). The X-coordinates
+  come from the new `find::search::compute_variant_x_bytes` helper.
+- `find::config::SweepRange` is removed (commit 8); the
+  `find::search::MAX_BATCH` constant is removed (commit 7b); the MSRV
+  is bumped 1.70 → 1.81 for the stable `core::error::Error` trait.
+
+Full migration table and Rust API example for `0.2.0` are in
+[`README.md`](../README.md#migration-016--020).
+
+### Is 0.1.6 still supported?
+
+Yes, during the transition. 0.1.x stays in the "Yes — during the 0.2.0
+transition window" bucket of the [support matrix](roadmap.md#supported-versions);
+0.0.x is not supported. Critical bug fixes for 0.1.x are
+backported on a best-effort basis; new development lands on `master` and
+ships in 0.2.x.
 
 ### What is the Secp256k1 Find Tool?
 
@@ -24,11 +55,16 @@ The project is licensed under the MIT License. See [LICENSE-MIT](../LICENSE-MIT)
 
 ### What Rust version do I need?
 
-Rust 1.70 or later. Install via [rustup](https://rustup.rs/):
+Rust **1.81** or later (the MSRV was bumped from 1.70 in commit 16 to use the
+stable `core::error::Error` trait; the doctest signatures in this crate use
+`Box<dyn core::error::Error>`). Install via [rustup](https://rustup.rs/):
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
+
+Downstream crates that pin MSRV ≤ 1.80 must vendor `core::error::Error`
+or delay their upgrade.
 
 ### Can I run this on Windows?
 
@@ -130,7 +166,7 @@ See [algorithms.md](algorithms.md) for the mathematical details and [ADR-0001](a
 
 ### What is batch normalization?
 
-Batch normalization uses Montgomery's simultaneous inversion trick to amortize modular inversion costs across multiple points. For a batch of 32 points, this provides approximately **15–20× speedup** in the normalization phase. See [ADR-0002](adr/0002-batch-normalization.md) and the benchmark in [`benches/bench.rs`](../benches/bench.rs).
+Batch normalization uses Montgomery's simultaneous inversion trick to amortize modular inversion costs across multiple points. For the default batch size of 32 points, this provides approximately **15–20× speedup** in the normalization phase. See [ADR-0002](adr/0002-batch-normalization.md), [performance.md#batch-normalization](performance.md#batch-normalization), and the benchmark in [`benches/bench.rs`](../benches/bench.rs).
 
 ### What is the VariantIndex?
 
@@ -140,12 +176,12 @@ The `VariantIndex` is a flat sorted array of 512 entries, sorted by X-coordinate
 
 The tool uses `rayon`'s work-stealing parallelism:
 
-- Range is divided into batches of 32 scalars.
+- Range is divided into batches of `Config::batch_size` scalars (default 32; range 1..=256; commit 7b).
 - Each worker processes one batch independently.
 - `find_map_any()` provides early exit on first match.
-- No locks required (the `VariantIndex` is read-only after construction).
+- No locks in the hot path: the `VariantIndex` is read-only after construction; `precompute_chunk`'s cross-batch coordination is a single `OnceLock<SearchMatch>` (commit 6).
 
-A custom Rayon `panic_handler` logs worker panics rather than aborting the process; the `Mutex::lock()` callers tolerate poisoned locks. See [observability.md#rayon-panic-handling](observability.md#rayon-panic-handling).
+A custom Rayon `panic_handler` logs worker panics rather than aborting the process. The search hot path uses `OnceLock` for cross-batch coordination, which has no mutex to be poisoned; the only `Mutex` left in the application is `FileCacheWriter`'s non-Unix fallback in `src/persistence.rs`. See [observability.md#rayon-panic-handling](observability.md#rayon-panic-handling) and [optimization-decisions/0007-oncelock-early-exit.md](optimization-decisions/0007-oncelock-early-exit.md).
 
 ## Performance
 
@@ -243,10 +279,11 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
 
 The tool is designed with security in mind:
 
-- One reviewed `unsafe` call (`libc::fsync` in `src/persistence.rs`); no other application-code `unsafe`
-- Input validation on all operations
+- One reviewed `unsafe` call (`libc::fsync` in `src/persistence.rs`); no other application-code `unsafe`. The review-driven pass (commits 1, 6) removed the two unsafes that existed at 0.1.6: `String::from_utf8_unchecked` in `u256_to_decimal`, and the `Mutex + AtomicBool` cross-batch coordination in `precompute_chunk` (now `OnceLock<SearchMatch>`).
+- Input validation on all operations: `Config::validate` (shallow) + `Config::validate_pubkey` (deep SEC1 parse) at the top of `orchestrator::run`; fallible `try_with_batch_size` / `try_with_variant_count` in `main`.
 - Checkpoint integrity verification
-- Atomic file operations
+- Atomic file operations (write-then-rename + parent-dir `fsync` on Unix)
+- Required-for-merge `cargo miri` job in CI (commit 9)
 
 For the full security model, see [security.md](security.md).
 

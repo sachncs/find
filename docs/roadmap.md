@@ -4,15 +4,42 @@ This document describes the project's direction. It is **not** a contract — it
 
 ## Current Status
 
-The project is at **v1.0.0**: a complete, fully-tested secp256k1 search engine. All stated goals in [overview.md](overview.md) are met.
+The crate is at **v0.1.6**. The `master` branch carries the **review-driven pass** in commits 1–18 — a sequence of safety, correctness, and API improvements reviewed against the elite-Rust checklist in `todo.md`. The next release is **v0.2.0**, a SemVer-minor bump because commits 7a, 7b, 7c, and 12 are breaking API changes (see [CHANGELOG.md](../CHANGELOG.md) and the [Migration table in README.md](../README.md#migration-016--020)).
 
-## Future Work
+All near-term items in the previous roadmap have shipped as part of commits 1–18 — the **Recently delivered** table below consolidates them.
 
-Items under consideration, in rough order of likely value:
+## Recently delivered (commits 1–18)
+
+| Item | Commit(s) | Documentation |
+|---|---|---|
+| Removed `unsafe` from `u256_to_decimal` | 1 | code inline (no ADR) |
+| Tightened the `libc::fsync` `// SAFETY:` block | 2 | inline (no ADR) |
+| `Config::validate_pubkey` (deep SEC1 fail-fast) + `FindError::InvalidConfig` | 3 | CHANGELOG |
+| `to_hex_x` ↔ `x_bytes` round-trip regression test (`tests/kat.rs`) | 4 | code inline |
+| `to_hex_x` uses `AffineCoordinates::x()` directly | 5 | opt-decision 0001 (predates commit) |
+| `OnceLock<SearchMatch>` in `precompute_chunk` | 6 | [opt-decision 0007](../optimization-decisions/0007-oncelock-early-exit.md) |
+| `BatchSize` newtype + `try_with_*` fallible builders | 7a | CHANGELOG |
+| Heap-allocated hot-path batch arrays + `Config::batch_size` honoured at runtime | 7b | [ADR-0009](../adr/0009-runtime-batch-size.md) |
+| Interned `&'static [OffsetVariant]` + `compute_variant_x_bytes` helper | 7c | opt-decisions 0002 |
+| Removed `SweepRange` dead newtype | 8 | CHANGELOG |
+| Required-for-merge `cargo miri` job in CI | 9 | CHANGELOG + CONTRIBUTING.md |
+| Curated `[lints]` configuration (pedantic + nursery with allow-list) | 10 | CHANGELOG |
+| `SearchMatch.candidates: [Scalar; 2]` (breaking) + `candidates_hex()` accessor | 12 | CHANGELOG + Migration table |
+| `copy_from_slice` in cached sweep (drop `try_into + expect`) | 13 | code inline |
+| ADR-0009 + opt-decision 0007 + CHANGELOG rollup + docs refresh | 14 | `docs/` tree |
+| Local pre-commit gate (fmt + clippy -D warnings + test + doc + miri) | 14 | CONTRIBUTING.md |
+| **Full pre-commit-gate verified locally + benchmark regression gate met** | 15 | commit message records cycle counts |
+| MSRV 1.70 → 1.81 for stable `core::error::Error` | 16 | CHANGELOG + Migration table |
+
+These items are "Recently delivered" rather than "Roadmap" because they are already on `master`. See the [CHANGELOG.md](../CHANGELOG.md) and `git log --oneline` for the per-commit breakdown.
+
+## Future work
+
+Items still under consideration, in rough order of likely value:
 
 ### Near term
 - **Improved progress visualization and ETA estimation.** Currently the orchestrator logs progress per chunk; a TUI would make long-running searches easier to monitor.
-- **Comprehensive benchmarking suite with historical tracking.** Integrate `criterion`'s `benches.csv` output with a trend dashboard.
+- **Comprehensive benchmarking suite with historical tracking.** Integrate `criterion`'s `benches.csv` output with a trend dashboard. The 5% regression gate from commit 15 is in place; historical data is the next step.
 - **Pluggable variant generation.** Allow users to define custom variant sets (e.g. focused on a specific range).
 
 ### Medium term
@@ -38,18 +65,19 @@ The following are explicitly **out of scope** and will not be pursued:
 
 The project follows [Semantic Versioning](https://semver.org/):
 
-- **MAJOR** — incompatible API or behavior change.
-- **MINOR** — backwards-compatible feature addition.
+- **MAJOR** — incompatible API or behavior change (not expected; the review-driven breaking changes are SemVer-minor because the crate is pre-1.0).
+- **MINOR** — backwards-compatible feature addition. The **review-driven pass that closed in commits 1–18** is one such MINOR cycle even though several breaking changes shipped (pre-1.0 SemVer permits this; see the Migration table in [README.md](../README.md#migration-016--020)).
 - **PATCH** — backwards-compatible bug fix.
 
-See [maintenance/release.md](maintenance/release.md) for the release process.
+The next release is **0.2.0** (a MINOR bump from the current 0.1.6). See [maintenance/release.md](maintenance/release.md) for the release process and [CHANGELOG.md](../CHANGELOG.md) for the projected `v0.2.0` entry.
 
 ## Supported Versions
 
 | Version | Supported |
 |---|---|
-| 1.x | Yes — current stable line |
-| 0.x | No — pre-stable; not recommended for any use |
+| 0.2.x | Yes — current stable line (post-review-driven) |
+| 0.1.x | Yes — during the 0.2.0 transition window; will move to "deprecated" once the 0.2 series stabilises |
+| 0.0.x | No — pre-stable; not recommended for any use |
 
 ## Deprecation Policy
 
@@ -57,7 +85,7 @@ When a feature is deprecated:
 
 1. The deprecation is announced in [CHANGELOG.md](../CHANGELOG.md) under `### Deprecated`.
 2. The deprecation note in the source code includes the version that will remove the feature and the recommended replacement.
-3. Deprecated features remain functional for at least one minor release cycle before removal.
+3. Deprecated features remain functional for at least one minor release cycle before removal. The review-driven pass already followed this policy for `Config::with_batch_size` / `with_variant_count` (deprecated in commit 7a; the originals remain in the source tree as `#[deprecated]` shims).
 
 ## Contributing Ideas
 
