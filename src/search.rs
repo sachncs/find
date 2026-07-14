@@ -1068,8 +1068,7 @@ fn u256_to_decimal(v: &U256) -> String {
         rem = q;
     }
     digits.reverse();
-    // SAFETY: every byte in `digits` is in `b'0'..=b'9'` (ASCII digits).
-    unsafe { String::from_utf8_unchecked(digits) }
+    String::from_utf8(digits).expect("digits are 0..=9 ASCII")
 }
 
 /// Computes `self / d` and `self % d` for `U256 / u64`.
