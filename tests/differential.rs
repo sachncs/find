@@ -19,7 +19,24 @@ use find::ecc;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 
 /// A set of scalars to use for differential testing.
-const TEST_SCALARS: &[u64] = &[1, 2, 3, 7, 100, 1000, 99999, 1_000_000, 1_234_567_890];
+///
+/// Includes boundary scalars (`1`, `n - 1`) and power-of-two anchors
+/// (`2^32`, `2^63`) that exercise different paths in k256's scalar
+/// multiplication.
+const TEST_SCALARS: &[u64] = &[
+    1,
+    2,
+    3,
+    7,
+    100,
+    1000,
+    99999,
+    1_000_000,
+    1_234_567_890,
+    1u64 << 32,
+    1u64 << 63,
+    u64::MAX,
+];
 
 /// Computes `d·G` using `secp256k1-sys` (the reference C implementation)
 /// and returns the 33-byte compressed SEC1 encoding.
