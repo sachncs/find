@@ -15,9 +15,9 @@ The project is **not** intended for, and must not be used for, recovering privat
 ## Goals
 
 - **Mathematical rigor.** Every algorithm is documented with its derivation, complexity, and correctness argument in [algorithms.md](algorithms.md).
-- **Engineering excellence.** The codebase follows idiomatic Rust. It contains a single reviewed `unsafe` call in [`src/persistence.rs`](../src/persistence.rs) for `libc::fsync`; see [security.md](security.md) for the audit trail. The search domain is kept free of I/O concerns via the [`CacheWriter`](search.rs) trait. See [architecture.md](architecture.md) and the [ADRs](adr/README.md).
-- **Reproducibility.** The full test suite, benchmarks, and verification methodology are documented in [testing.md](testing.md) and [benchmarks.md](benchmarks.md).
-- **Maintainability.** Critical engineering decisions are captured as Architecture Decision Records under [docs/adr/](adr/README.md) so that future contributors understand the *why* behind the *what*.
+- **Engineering excellence.** The codebase follows idiomatic Rust and a curated `[lints]` configuration (pedantic + nursery clippy gated by `-D warnings`). It contains a single reviewed `unsafe` call in [`src/persistence.rs`](../src/persistence.rs) for `libc::fsync`; see [security.md](security.md) for the audit trail. After the review-driven pass the application code retains **one** `unsafe` block total (commits 1 and 6 removed the two that existed at 0.1.6 — `String::from_utf8_unchecked` in `u256_to_decimal`, and the `Mutex<Option<SearchMatch>>` coordination in `precompute_chunk`). The search domain is kept free of I/O concerns via the [`CacheWriter`](search.rs) trait. See [architecture.md](architecture.md) and the [ADRs](adr/README.md).
+- **Reproducibility.** The full test suite, miri run, and verification methodology are documented in [testing.md](testing.md) and [benchmarks.md](benchmarks.md). The local pre-commit gate mirrors CI: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, `cargo test --doc`, `RUSTDOCFLAGS=-D warnings cargo doc --no-deps --all-features`, and — for PRs that touch `unsafe` — `cargo +nightly miri test --workspace --all-features`. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+- **Maintainability.** Critical engineering decisions are captured as Architecture Decision Records under [docs/adr/](adr/README.md) (0001–0009) and shorter optimization write-ups under [docs/optimization-decisions/](optimization-decisions/README.md) (0001–0007) so that future contributors understand the *why* behind the *what*.
 
 ## Non-Goals
 
@@ -59,7 +59,7 @@ The release pipeline builds and ships binaries for all five targets — see [mai
 
 | Component | Minimum | Recommended |
 |---|---|---|
-| Rust toolchain | 1.70 (declared in `Cargo.toml`) | Latest stable |
+| Rust toolchain | **1.81** (declared in [`Cargo.toml`](../Cargo.toml), bumped from 1.70 in commit 16 for `core::error::Error`) | Latest stable (1.95+ tested) |
 | `k256` crate | 0.13 (pinned) | 0.13 |
 | Operating system | Linux 5.x / macOS 11 / Windows 10 | Latest LTS |
 | CPU | 2 physical cores | 8+ physical cores |
@@ -70,21 +70,22 @@ The release pipeline builds and ships binaries for all five targets — see [mai
 
 | Dependency | Version | Purpose | Rationale |
 |---|---|---|---|
-| `k256` | 0.13 | secp256k1 arithmetic, point operations, batch normalization | Pure-Rust, audited, and provides Montgomery simultaneous inversion out of the box |
+| `k256` | 0.13 (features: `arithmetic`, `serde`, `bits`, `pkcs8`) | secp256k1 arithmetic, point operations, batch normalization | Pure-Rust, audited, and provides Montgomery simultaneous inversion out of the box; the `arithmetic` feature exposes the `ProjectivePoint::batch_normalize` and BigInt-backed `Scalar::reduce`. |
 | `rayon` | 1.8 | Work-stealing data-level parallelism | De-facto standard for CPU-bound parallelism in Rust; provides `find_map_any` early-exit semantics |
-| `clap` | 4.4 (derive) | Command-line argument parsing | Type-safe derive macros; widely used in the Rust ecosystem |
+| `clap` | 4.4 (features: `derive`, `env`) | Command-line argument parsing | Type-safe derive macros; widely used in the Rust ecosystem |
 | `thiserror` | 1.0 | Library error types | Eliminates boilerplate for the [`FindError`](modules.md#error) hierarchy |
 | `anyhow` | 1.0 | Application-level error handling | Used in `main.rs` for the binary's top-level error reporting |
 | `serde` / `serde_json` | 1.0 / 1.0 | Checkpoint and variant export serialization | Industry standard; well-supported JSON output |
-| `tracing` / `tracing-subscriber` / `tracing-appender` | 0.1 / 0.3 / 0.2 | Structured observability with daily-rolling logs | Non-blocking log writer avoids backpressure into the CPU-bound sweep |
+| `tracing` / `tracing-subscriber` (feature `env-filter`) / `tracing-appender` | 0.1 / 0.3 / 0.2 | Structured observability with daily-rolling logs | Non-blocking log writer avoids backpressure into the CPU-bound sweep; `env-filter` enables `RUST_LOG`-style filtering |
 | `hex` | 0.4 | Hexadecimal encoding/decoding | Minimal, focused, widely used |
-| `num-bigint` | 0.4 | Big integer arithmetic for test helpers and `u256_to_decimal` | Provides `BigUint` for tests and serialization of variant offsets that exceed `u64` |
-| `libc` (Unix) | 0.2 | `fsync` on parent directory for durable rename | Standard binding for POSIX filesystem operations |
-| `proptest` (dev) | 1.5 | Property-based testing | Verifies algebraic invariants over the 64-bit scalar range |
+| `num-bigint` | 0.4 | Big integer arithmetic for test helpers | Provides `BigUint` for tests of scalar values that exceed `u64` |
+| `libc` (Unix-only) | 0.2 | Direct `libc::fsync` on parent directory for durable rename | Standard binding for POSIX filesystem operations; the one reviewed `unsafe` |
+| `proptest` (dev) | 1.11 | Property-based testing | Verifies algebraic invariants over the 64-bit scalar range; new 100-case proptest for `to_hex_x` ↔ `x_bytes` round-trip, prop_batch_size_runtime for runtime-sized batches |
 | `tempfile` (dev) | 3.10 | Isolated test directories | Required for cache, checkpoint, and JSON-export tests |
-| `rand` / `rand_chacha` (dev) | 0.8 / 0.3 | Deterministic RNG for the randomized discovery test | Seeded `ChaCha8Rng` keeps the test reproducible |
-| `criterion` (dev) | 0.5 | Micro-benchmarks | De-facto Rust benchmarking harness |
+| `rand` / `rand_chacha` (dev) | 0.10 / 0.10 | Deterministic RNG for the randomized discovery test | Seeded `ChaCha8Rng` keeps the test reproducible |
+| `criterion` (dev) | 0.8 | Micro-benchmarks | De-facto Rust benchmarking harness |
 | `num-traits` (dev) | 0.2 | Numeric trait imports for tests | Standard numeric trait support |
+| `secp256k1-sys` (dev) | 0.13 (default-features disabled, `std`) | Reference C implementation for differential tests | Bundles `libsecp256k1` from source; used by `tests/differential.rs` to cross-check `k256`'s arithmetic |
 
 ## Known Limitations
 

@@ -4,7 +4,7 @@ This document is a guided walkthrough of your first search with the `find` tool.
 
 ## Prerequisites
 
-- **Rust:** 1.70 or later (install via [rustup](https://rustup.rs/))
+- **Rust:** 1.81 or later (the MSRV bumped in commit 16 to use the stable `core::error::Error` trait; install via [rustup](https://rustup.rs/))
 - **Operating System:** Linux, macOS, or Windows
 - **Storage:** At least 32 GB free if using binary caching
 - **Git:** for cloning the repository
@@ -27,7 +27,7 @@ The tool requires a SEC1-encoded public key. The Bitcoin secp256k1 generator poi
 ./target/release/find --pubkey 0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798
 ```
 
-This runs a CPU-bound parallel sweep without writing any cache files. The first run is dominated by the 512-variant construction; subsequent runs are faster.
+This runs a CPU-bound parallel sweep without writing any cache files. The first call to `generate_variants` builds and interns the 512-variant metadata set in a process-wide `OnceLock<Box<[OffsetVariant; 512]>>` (commit 7c); subsequent runs in the same process re-use the same interned slice for free. The target-specific X-coordinates are computed once per session via `compute_variant_x_bytes`.
 
 You will see output similar to:
 
@@ -70,9 +70,15 @@ To accelerate repeated searches of the same range, enable binary caching:
 ./target/release/find --pubkey 0279be66... --cache-points
 ```
 
-This precomputes a 32 GB cache file per billion scalars. The first run takes longer (it must write the cache), but subsequent runs against any public key reuse the cache.
+This precomputes a 32 GB cache file per billion scalars. The first run takes
+longer (it must write the cache), but subsequent runs against any public key
+reuse the cache. The `--batch-size` flag (now honoured at runtime after
+[ADR-0009](adr/0009-runtime-batch-size.md)) controls the size of the
+per-batch allocation used during the cache precompute (`batch_size` scalars
+per write block; defaults to 32).
 
-The cache is written to `data/checkpoints/chunk_<start_j>.bin`. See [ADR-0006](adr/0006-binary-cache-format.md) for the file format.
+The cache is written to `data/checkpoints/chunk_<start_j>.bin`. See
+[ADR-0006](adr/0006-binary-cache-format.md) for the file format.
 
 ## Step 5: Resume an interrupted search
 
@@ -89,11 +95,12 @@ The tool automatically checkpoints progress. If the search is interrupted (Ctrl-
 
 The resume behavior is:
 
-1. Read `data/checkpoint.json`.
-2. If the pubkey matches, verify the integrity anchor (the X-coordinate of `last_j · G`).
-3. If valid, resume from `last_j + 1`.
-4. If the pubkey differs, start a fresh search (with a warning).
-5. If the anchor is invalid, refuse to proceed with `ResearchIntegrityError`.
+1. Run `Config::validate` (shallow) and `Config::validate_pubkey` (deep, via `ecc::parse_pubkey`) on the current `--pubkey` value — fail-fast before any state is allocated.
+2. Read `data/checkpoint.json`.
+3. If the pubkey matches, verify the integrity anchor (the X-coordinate of `last_j · G`).
+4. If valid, resume from `last_j + 1`.
+5. If the pubkey differs, start a fresh search (with a warning).
+6. If the anchor is invalid, refuse to proceed with `ResearchIntegrityError`.
 
 See [ADR-0003](adr/0003-atomic-checkpointing.md) for the checkpoint design.
 
@@ -108,26 +115,31 @@ sequenceDiagram
     participant P as Persistence
     participant FS as File System
 
-    U->>F: find --pubkey 0279be66...
+    U->>F: find --pubkey 0279be66... --batch-size 32 --variants 512
     F->>F: parse args, init tracing
+    F->>F: Config::try_with_batch_size(32) / try_with_variant_count(512)
     F->>O: run(&Config)
-    O->>O: validate (pubkey non-empty)
+    O->>O: Config::validate() (shallow)
+    O->>O: Config::validate_pubkey() (deep, ecc::parse_pubkey)
     O->>S: generate_variants(target_p)
-    S-->>O: 512 variants
-    O->>P: save_variants_to_json
+    S-->>O: &'static [OffsetVariant; 512]  (interned via OnceLock)
+    O->>S: compute_variant_x_bytes(target_p)
+    S-->>O: Vec<[u8; 32]> of length 512
+    O->>P: save_variants_to_json(metas, &x_bytes, dir)
     P->>FS: write data/points.json
-    O->>O: build VariantIndex
+    O->>S: VariantIndex::new(metas, &x_bytes)
+    S-->>O: index (sorted by X)
     O->>P: Checkpoint::load
     alt no checkpoint
         O->>O: current_j = 0
     end
     O->>O: chunk_start = 1, chunk_end = 1_000_000_000
-    O->>S: perform_chunked_sweep(index, 1, 1_000_000_000)
+    O->>S: perform_chunked_sweep(index, 1, 1_000_000_000, batch_size=32)
     S->>S: for each batch of 32: scalar_mul_g + G chain + batch_normalize + match_x
     alt match found
-        S-->>O: Some(SearchMatch { j, candidates, ... })
+        S-->>O: Some(SearchMatch { candidates: [Scalar; 2], .. })
         O-->>F: Ok(Some(m))
-        F->>U: print MATCH DISCOVERED
+        F->>U: print MATCH DISCOVERED  +  candidates_hex()
     else no match
         S-->>O: None
         O->>P: Checkpoint::save_atomic
@@ -143,7 +155,7 @@ A typical first run produces:
 
 | File | Purpose |
 |---|---|
-| `data/points.json` | Variant metadata (X-coordinate → offset) |
+| `data/points.json` | Variant metadata + target-specific X-coordinates (X → offset mapping); written once at the start of each session |
 | `data/checkpoint.json` | Progress checkpoint |
 | `logs/find.log.YYYY-MM-DD` | Daily-rolling log file |
 
@@ -165,7 +177,7 @@ If `--cache-points` is enabled, additionally:
 
 ### Build fails
 
-Ensure Rust 1.70+ is installed:
+Ensure Rust **1.81** or later is installed (the MSRV declared in `Cargo.toml`):
 
 ```bash
 rustc --version
