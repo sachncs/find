@@ -105,24 +105,14 @@ fn main() -> anyhow::Result<()> {
 
     info!("Initializing find tool v{}", env!("CARGO_PKG_VERSION"));
 
-    // Build the config; the with_* builders assert on out-of-range
-    // values, so we validate the user-provided args up front.
-    let mut config = Config::new(args.pubkey, args.output_dir, args.cache_points);
-    if !(1..=find::config::MAX_BATCH_SIZE).contains(&args.batch_size) {
-        return Err(anyhow::anyhow!(
-            "--batch-size must be in 1..={}",
-            find::config::MAX_BATCH_SIZE
-        ));
-    }
-    if !(1..=find::config::MAX_VARIANT_COUNT).contains(&args.variants) {
-        return Err(anyhow::anyhow!(
-            "--variants must be in 1..={}",
-            find::config::MAX_VARIANT_COUNT
-        ));
-    }
-    config = config
-        .with_batch_size(args.batch_size)
-        .with_variant_count(args.variants);
+    // Build the config. The try_with_* builders return FindError on
+    // out-of-range values; we propagate as a non-zero exit code via
+    // anyhow.
+    let config = Config::new(args.pubkey, args.output_dir, args.cache_points)
+        .try_with_batch_size(args.batch_size)
+        .map_err(|e| anyhow::anyhow!("--batch-size: {e}"))?
+        .try_with_variant_count(args.variants)
+        .map_err(|e| anyhow::anyhow!("--variants: {e}"))?;
 
     let start = Instant::now();
     match orchestrator::run(&config)? {

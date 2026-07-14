@@ -83,6 +83,66 @@ pub const MAX_BATCH_SIZE: u32 = 256;
 /// Maximum variant count the engine can address.
 pub const MAX_VARIANT_COUNT: u32 = 512;
 
+/// A bounded number of points per Montgomery batch-normalization.
+///
+/// A thin newtype that records intent ("batch size") and enforces the
+/// legal range at construction time. Replacement for the raw `u32`
+/// `Config::batch_size` field; the newtype cannot be silently
+/// constructed out of range.
+///
+/// The legal range is `1..=[`BatchSize::MAX`]`. The default is
+/// [`BatchSize::DEFAULT`].
+///
+/// # Examples
+///
+/// ```
+/// use find::config::BatchSize;
+///
+/// let bs = BatchSize::new(64).expect("64 is in range");
+/// assert_eq!(bs.get(), 64);
+///
+/// assert!(BatchSize::new(0).is_err());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BatchSize(u32);
+
+impl BatchSize {
+    /// Smallest legal batch size.
+    pub const MIN: u32 = 1;
+    /// Largest legal batch size. Capped by the heap allocation budget
+    /// of the search engine; see ADR-0009 (commit 14).
+    pub const MAX: u32 = MAX_BATCH_SIZE;
+    /// Default batch size, used by `Config::new` and tests.
+    pub const DEFAULT: BatchSize = BatchSize(DEFAULT_BATCH_SIZE);
+
+    /// Constructs a `BatchSize` from a raw `u32`, returning
+    /// [`FindError::InvalidConfig`] on out-of-range values.
+    pub fn new(size: u32) -> Result<Self> {
+        if (Self::MIN..=Self::MAX).contains(&size) {
+            Ok(BatchSize(size))
+        } else {
+            Err(FindError::InvalidConfig(format!(
+                "batch_size {size} out of range {}..={}",
+                Self::MIN,
+                Self::MAX
+            )))
+        }
+    }
+
+    /// Returns the inner `u32` value.
+    #[inline]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl Default for BatchSize {
+    #[inline]
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 /// A bounded inclusive range of `u64` scalars to sweep.
 ///
 /// This is a thin newtype that documents intent and provides validation.
@@ -187,17 +247,19 @@ pub struct Config {
     pub cache_points: bool,
     /// Number of points per Montgomery batch-normalization.
     ///
-    /// Defaults to [`DEFAULT_BATCH_SIZE`] (32). Tunable via
-    /// [`Config::with_batch_size`]. Smaller values reduce per-batch
-    /// stack usage; larger values amortise the single Montgomery
-    /// inversion across more points.
-    pub batch_size: u32,
+    /// Defaults to [`BatchSize::DEFAULT`]. Tunable via
+    /// [`Config::with_batch_size`] (panicking) or
+    /// [`Config::try_with_batch_size`] (fallible). Smaller values
+    /// reduce per-batch allocation cost; larger values amortise the
+    /// single Montgomery inversion across more points.
+    pub batch_size: BatchSize,
     /// Number of shift variants per session.
     ///
     /// Defaults to [`DEFAULT_VARIANT_COUNT`] (512). Tunable via
-    /// [`Config::with_variant_count`]. Smaller values reduce the
-    /// variant-set memory footprint at the cost of missing some
-    /// small-scalar targets.
+    /// [`Config::with_variant_count`] (panicking, deprecated) or
+    /// [`Config::try_with_variant_count`] (fallible). Smaller values
+    /// reduce the variant-set memory footprint at the cost of missing
+    /// some small-scalar targets.
     pub variant_count: u32,
 }
 
@@ -239,7 +301,7 @@ impl Config {
             pubkey: pubkey.into(),
             output_dir: output_dir.into(),
             cache_points,
-            batch_size: DEFAULT_BATCH_SIZE,
+            batch_size: BatchSize::DEFAULT,
             variant_count: DEFAULT_VARIANT_COUNT,
         }
     }
@@ -249,18 +311,20 @@ impl Config {
     /// # Arguments
     ///
     /// * `size` — Number of points per Montgomery batch-normalization.
-    ///   Allowed range: 1..=[`MAX_BATCH_SIZE`].
+    ///   Allowed range: 1..=[`BatchSize::MAX`].
     ///
     /// # Panics
     ///
-    /// Panics if `size` is outside the allowed range. Callers should
-    /// validate at the CLI boundary.
+    /// Panics if `size` is outside the allowed range. Prefer
+    /// [`Config::try_with_batch_size`] for fallible construction; this
+    /// method is retained for backward compat.
+    #[deprecated(note = "use try_with_batch_size for fallible construction")]
     pub fn with_batch_size(mut self, size: u32) -> Self {
         assert!(
             (1..=MAX_BATCH_SIZE).contains(&size),
             "batch_size {size} out of range 1..={MAX_BATCH_SIZE}"
         );
-        self.batch_size = size;
+        self.batch_size = BatchSize(size);
         self
     }
 
@@ -273,8 +337,9 @@ impl Config {
     ///
     /// # Panics
     ///
-    /// Panics if `count` is outside the allowed range. Callers should
-    /// validate at the CLI boundary.
+    /// Panics if `count` is outside the allowed range. Prefer
+    /// [`Config::try_with_variant_count`].
+    #[deprecated(note = "use try_with_variant_count for fallible construction")]
     pub fn with_variant_count(mut self, count: u32) -> Self {
         assert!(
             (1..=MAX_VARIANT_COUNT).contains(&count),
@@ -282,6 +347,37 @@ impl Config {
         );
         self.variant_count = count;
         self
+    }
+
+    /// Fallible batch-size setter. Returns
+    /// [`FindError::InvalidConfig`] on out-of-range values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::config::Config;
+    ///
+    /// let cfg = Config::new("02abcd", "data", false);
+    /// let cfg = cfg.try_with_batch_size(64).unwrap();
+    /// assert_eq!(cfg.batch_size.get(), 64);
+    /// assert!(cfg.try_with_batch_size(0).is_err());
+    /// ```
+    pub fn try_with_batch_size(mut self, size: u32) -> Result<Self> {
+        let bs = BatchSize::new(size)?;
+        self.batch_size = bs;
+        Ok(self)
+    }
+
+    /// Fallible variant-count setter. Returns
+    /// [`FindError::InvalidConfig`] on out-of-range values.
+    pub fn try_with_variant_count(mut self, count: u32) -> Result<Self> {
+        if !(1..=MAX_VARIANT_COUNT).contains(&count) {
+            return Err(FindError::InvalidConfig(format!(
+                "variant_count {count} out of range 1..={MAX_VARIANT_COUNT}"
+            )));
+        }
+        self.variant_count = count;
+        Ok(self)
     }
 
     /// Shallow-validates that all required fields are non-empty.
@@ -404,6 +500,78 @@ mod tests {
         assert!(empty.validate_pubkey().is_err());
         let ws = Config::new("   ", "/tmp", false);
         assert!(ws.validate_pubkey().is_err());
+    }
+
+    /// Verifies that `BatchSize::new` accepts legal values.
+    #[test]
+    fn test_config_try_with_batch_size_in_range() {
+        let cfg = Config::new("02abcd", "/tmp", false);
+        assert_eq!(
+            cfg.clone().try_with_batch_size(1).unwrap().batch_size.get(),
+            1
+        );
+        assert_eq!(
+            cfg.clone()
+                .try_with_batch_size(BatchSize::MAX)
+                .unwrap()
+                .batch_size
+                .get(),
+            BatchSize::MAX
+        );
+        assert_eq!(
+            cfg.try_with_batch_size(64).unwrap().batch_size.get(),
+            64
+        );
+    }
+
+    /// Verifies that `BatchSize::new` rejects out-of-range values.
+    #[test]
+    fn test_config_try_with_batch_size_out_of_range() {
+        let cfg = Config::new("02abcd", "/tmp", false);
+        assert!(matches!(
+            cfg.clone().try_with_batch_size(0),
+            Err(FindError::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            cfg.try_with_batch_size(BatchSize::MAX + 1),
+            Err(FindError::InvalidConfig(_))
+        ));
+    }
+
+    /// Verifies that `try_with_variant_count` accepts legal values and
+    /// rejects out-of-range ones.
+    #[test]
+    fn test_config_try_with_variant_count() {
+        let cfg = Config::new("02abcd", "/tmp", false);
+        assert_eq!(
+            cfg.clone().try_with_variant_count(1).unwrap().variant_count,
+            1
+        );
+        assert_eq!(
+            cfg.clone()
+                .try_with_variant_count(MAX_VARIANT_COUNT)
+                .unwrap()
+                .variant_count,
+            MAX_VARIANT_COUNT
+        );
+        assert!(matches!(
+            cfg.clone().try_with_variant_count(0),
+            Err(FindError::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            cfg.try_with_variant_count(MAX_VARIANT_COUNT + 1),
+            Err(FindError::InvalidConfig(_))
+        ));
+    }
+
+    /// Verifies that `BatchSize` default + newtype accessors behave.
+    #[test]
+    fn test_batch_size_newtype() {
+        assert_eq!(BatchSize::DEFAULT.get(), DEFAULT_BATCH_SIZE);
+        assert_eq!(BatchSize::MIN, 1);
+        assert_eq!(BatchSize::MAX, MAX_BATCH_SIZE);
+        assert_eq!(BatchSize::new(32).unwrap().get(), 32);
+        assert!(BatchSize::new(0).is_err());
     }
 
     /// Verifies that `SweepRange::new` clamps `start` to `MIN_J`.
