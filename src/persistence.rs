@@ -208,12 +208,26 @@ impl Checkpoint {
             use std::os::unix::io::AsRawFd;
             if let Some(parent) = path.parent() {
                 if let Ok(dir) = std::fs::File::open(parent) {
-                    // SAFETY: `AsRawFd` is a safe trait method that returns a
-                    // valid file descriptor borrowed from `dir`. The descriptor
-                    // remains valid for the duration of the call. `fsync` is
-                    // safe to call on any open file descriptor; failure is
-                    // non-fatal for the rename atomicity guarantee, hence the
-                    // discarded return value.
+                    // SAFETY:
+                    //   (a) `dir.as_raw_fd()` returns a borrowed file
+                    //       descriptor backed by the local `dir: File`.
+                    //       The `File` is kept alive across the unsafe call
+                    //       (it is in scope for the whole `if let Ok(dir)`
+                    //       block), so the descriptor cannot be closed or
+                    //       recycled while `fsync` is using it.
+                    //   (b) `libc::fsync` is safe to invoke on any open
+                    //       file descriptor that the caller owns; the
+                    //       descriptor was just produced by `File::open`,
+                    //       so it is owned.
+                    //   (c) The `Result` is intentionally discarded via
+                    //       `let _ =` — a failed `fsync` only weakens the
+                    //       durability of the rename (a crash mid-write
+                    //       could leave the directory entry pointing at
+                    //       the renamed file before the inode is on
+                    //       disk). This is acceptable for a research
+                    //       checkpoint: a subsequent resume would either
+                    //       load the previous valid checkpoint or start
+                    //       fresh, both of which are safe outcomes.
                     let _ = unsafe { libc::fsync(dir.as_raw_fd()) };
                 }
             }
