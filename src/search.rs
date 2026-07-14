@@ -14,11 +14,13 @@
 //!   [`Ordering::Relaxed`]; it is safe to call from any number of Rayon
 //!   worker threads concurrently.
 //! - [`VariantIndex`] is built once and then read-only; it is [`Sync`].
-//! - [`precompute_chunk`] uses a [`Mutex<Option<SearchMatch>>`] as a
-//!   best-effort broadcast channel: any worker that finds a match writes
-//!   it; remaining workers observe it via a non-blocking lock check and
-//!   short-circuit. Poisoning is tolerated via `into_inner()` so that a
-//!   worker panic does not corrupt the result.
+//! - [`precompute_chunk`] uses a [`OnceLock<SearchMatch>`] as a one-shot
+//!   best-effort broadcast channel: any worker that finds a match
+//!   publishes it via `OnceLock::set`; remaining workers observe it via
+//!   the lock-free `get()` check at the top of each batch. There is no
+//!   mutex and no atomics — the `OnceLock` guarantees at-most-one
+//!   publication internally. Panicking workers cannot poison the result
+//!   because there is no lock to poison.
 //! - [`perform_chunked_sweep`] uses Rayon's `find_map_any` for early exit
 //!   when the first match is found; later batches are not scheduled.
 //!
@@ -68,7 +70,7 @@ use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::OnceLock;
 use tracing::instrument;
 
 /// The fixed batch size used for batch normalization in the search engine.
@@ -850,17 +852,18 @@ pub fn perform_chunked_sweep(index: &VariantIndex, start: u64, end: u64) -> Opti
 /// batch, so it reflects the **actual** scalars processed (not a
 /// multiple of `BATCH_SIZE`).
 ///
-/// The early-exit lock check at the top of each batch is lock-free in the
-/// common case: the worker takes the mutex briefly to inspect whether a
-/// match was already recorded, then releases it. Lock contention is
-/// negligible because the critical section is one branch.
+/// The early-exit check at the top of each batch is a single
+/// [`OnceLock::get`] — there is no mutex and no atomic load. Once a
+/// worker publishes its match via [`OnceLock::set`], every other
+/// worker's `get()` returns `Some` on the next iteration and the
+/// batch becomes a no-op.
 ///
 /// # Pseudocode
 ///
 /// ```text
-/// match_found = Mutex<None>
+/// match_once = OnceLock<SearchMatch>
 /// batches.parallel_for_each(|batch_idx| {
-///     if match_found contains Some(_): return    # fast-path no-op
+///     if match_once.get() is Some: return       # lock-free fast-path
 ///     let (chunk_start, count) = batch_bounds(batch_idx)
 ///     let mut current = chunk_start * G
 ///     let mut block = []
@@ -868,12 +871,12 @@ pub fn perform_chunked_sweep(index: &VariantIndex, start: u64, end: u64) -> Opti
 ///         block.push(X(current))
 ///         if let Some(idx) = index:
 ///             if idx.match_x(X(current), j) is Some(m):
-///                 match_found = Some(m); return
+///                 let _ = match_once.set(m); return
 ///         current += G
 ///     writer.write_block(batch_offset, &block)?
 ///     progress.add(count)
 /// })
-/// match_found.into_inner()
+/// match_once.into_inner()
 /// ```
 pub fn precompute_chunk<W: CacheWriter>(
     start: u64,
@@ -893,20 +896,22 @@ pub fn precompute_chunk<W: CacheWriter>(
     } else {
         (range_len - 1) / BATCH_SIZE + 1
     };
-    let match_found: Mutex<Option<SearchMatch>> = Mutex::new(None);
-    // `AtomicBool` fast-path for the early-exit check: workers spin on this
-    // with `Relaxed` ordering so the hot path costs one atomic load instead
-    // of a `Mutex::lock`. The mutex is only acquired when a worker actually
-    // has a match to publish, after which it stores through the mutex and
-    // flips the flag with `Release` so other workers see the publication.
-    let match_published = std::sync::atomic::AtomicBool::new(false);
+    // `OnceLock<SearchMatch>` as the one-shot best-effort broadcast
+    // channel. Workers check `get()` lock-free at the top of each batch
+    // and skip if a match has already been published. The first worker
+    // to find a match wins via `set`; subsequent workers see the value
+    // but their `set` returns Err and is discarded. Replaces the
+    // previous `Mutex<Option<SearchMatch>> + AtomicBool` pair (see
+    // optimization-decisions/0004-atomic-flag-early-exit.md and the
+    // upcoming 0007-oncelock-early-exit.md for the rationale).
+    let match_once: OnceLock<SearchMatch> = OnceLock::new();
 
     (0..num_batches)
         .into_par_iter()
         .try_for_each(|batch_idx| -> Result<()> {
             // Fast-path check without locking — if another worker already
             // found a match, skip this batch entirely.
-            if match_published.load(Ordering::Relaxed) {
+            if match_once.get().is_some() {
                 return Ok(());
             }
 
@@ -953,14 +958,11 @@ pub fn precompute_chunk<W: CacheWriter>(
             }
 
             if let Some(m) = local_match {
-                if let Ok(mut guard) = match_found.lock() {
-                    *guard = Some(m);
-                    // Release ordering: any thread that observes
-                    // match_published == true via the next Acquire/Relaxed
-                    // load is guaranteed to see the match stored in the
-                    // mutex above.
-                    match_published.store(true, Ordering::Release);
-                }
+                // `set` returns Err iff the value was already published by
+                // another worker; either outcome is correct (we still
+                // publish *our* match candidate via the existing slot or
+                // we accept the winner). Discarding the Err is intentional.
+                let _ = match_once.set(m);
                 return Ok(());
             }
 
@@ -974,16 +976,9 @@ pub fn precompute_chunk<W: CacheWriter>(
             Ok(())
         })?;
 
-    // Extract the match, gracefully ignoring poison (a panicked worker may
-    // have held the lock; we still want to return whatever result we have).
-    let result = match match_found.into_inner() {
-        Ok(r) => r,
-        Err(poisoned) => {
-            tracing::warn!("Precompute worker panicked; extracting partial result");
-            poisoned.into_inner()
-        }
-    };
-    Ok(result)
+    // Extract the match (if any). `OnceLock::into_inner` returns
+    // `Option<T>` directly; there is no lock to be poisoned.
+    Ok(match_once.into_inner())
 }
 
 // ---------------------------------------------------------------------------
