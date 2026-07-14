@@ -237,7 +237,7 @@ impl VariantIndex {
     /// The binary search walks `keys` only; the variant metadata is
     /// fetched on a match via `order[idx] -> variants[order[idx]]`. Cold-
     /// storage indirection on miss keeps the hot loop in L1.
-    #[inline]
+    #[inline(always)]
     pub fn match_x(&self, test_x: &[u8; 32], j: u64) -> Option<SearchMatch> {
         let idx = self.keys.binary_search_by(|probe| probe.cmp(test_x)).ok()?;
         let var_idx = self.order[idx];
@@ -1013,7 +1013,7 @@ pub const MAX_BATCH: usize = 32;
 /// round-trip — saves one SEC1 prefix-byte computation per point in the
 /// hot loop. The `AffineCoordinates` trait is re-exported from
 /// `k256::elliptic_curve::point`.
-#[inline(always)]
+#[inline]
 fn affine_x_bytes(affine: &AffinePoint) -> Option<[u8; 32]> {
     use k256::elliptic_curve::group::prime::PrimeCurveAffine;
     use k256::elliptic_curve::point::AffineCoordinates;
@@ -1029,6 +1029,7 @@ fn affine_x_bytes(affine: &AffinePoint) -> Option<[u8; 32]> {
 /// Converts a scalar to a lower-case hex string with leading zeros removed.
 ///
 /// The value zero is rendered as `"0"`.
+#[inline]
 fn scalar_to_hex_trimmed(s: &Scalar) -> String {
     let hex = hex::encode(s.to_bytes());
     let trimmed = hex.trim_start_matches('0');
@@ -1077,7 +1078,7 @@ fn u256_to_decimal(v: &U256) -> String {
 /// `from_be_byte_array()`; the most direct way to divmod by a small
 /// divisor is to walk the bytes big-endian, maintaining a running
 /// 16-bit remainder.
-#[inline]
+#[inline(always)]
 fn div_rem_u256_by_u64(v: U256, d: u64) -> (U256, u64) {
     use k256::elliptic_curve::bigint::ArrayEncoding;
     debug_assert!(d > 0);
