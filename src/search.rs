@@ -37,7 +37,7 @@
 //! Hot-path arrays are heap-allocated and track the runtime
 //! [`crate::config::Config::batch_size`] (capped at
 //! [`crate::config::BatchSize::MAX`] = 256). At the default
-//! `batch_size = 32` the per-batch allocation cost is ~3 KB on x86_64
+//! `batch_size = 32` the per-batch allocation cost is ~3 KB on `x86_64`
 //! (32 × 96 bytes for [`ProjectivePoint`] + 32 × 96 bytes for
 //! [`AffinePoint`] + 32 × 32 bytes for the X-coordinate scratch
 //! buffer), keeping the working set inside L1 cache. The runtime-
@@ -79,7 +79,7 @@ use tracing::instrument;
 
 /// The fixed batch size used for batch normalization in the search engine.
 ///
-/// 32 is empirically the sweet spot on x86_64 and aarch64: stack allocation
+/// 32 is empirically the sweet spot on `x86_64` and aarch64: stack allocation
 /// cost (32 × 96 bytes ≈ 3 KB) fits in L1 cache, and the cost of 32 scalar
 /// multiplications roughly balances one batch normalization.
 ///
@@ -159,7 +159,7 @@ pub struct OffsetVariant {
 ///
 /// For the typical \(N = 512\) variant set:
 ///
-/// - `keys`: 512 × 32 = 16 KiB (L1-resident on every modern x86_64 / aarch64)
+/// - `keys`: 512 × 32 = 16 KiB (L1-resident on every modern `x86_64` / aarch64)
 /// - `order`: 512 × 8 = 4 KiB
 /// - `variants`: shared `&'static [OffsetVariant]` (built once per process)
 /// - `x_bytes`: 512 × 32 = 16 KiB of target-specific keys passed in to
@@ -244,8 +244,8 @@ impl VariantIndex {
     /// If a match is found, two candidate private keys are derived from the
     /// matched variant's scalar offset and the supplied `j`:
     ///
-    /// - \(c_1 = V + j \pmod n\)
-    /// - \(c_2 = V - j \pmod n\)
+    /// - \(`c_1` = V + j \pmod n\)
+    /// - \(`c_2` = V - j \pmod n\)
     ///
     /// Because X-coordinates do not distinguish the two Y-parities, every
     /// match returns two candidates; the orchestrator or downstream code
@@ -302,7 +302,7 @@ impl VariantIndex {
     /// let first_label = &index.variants()[0].label;
     /// assert!(first_label == "2^0" || first_label.starts_with("sum"));
     /// ```
-    pub fn variants(&self) -> &'static [OffsetVariant] {
+    pub const fn variants(&self) -> &'static [OffsetVariant] {
         self.variants
     }
 }
@@ -375,7 +375,7 @@ impl SearchMatch {
     /// Provided for API ergonomics — callers that want to iterate over
     /// both candidates uniformly can use `.as_slice()` rather than
     /// indexing into the array directly.
-    pub fn candidates(&self) -> &[Scalar; 2] {
+    pub const fn candidates(&self) -> &[Scalar; 2] {
         &self.candidates
     }
 
@@ -400,7 +400,7 @@ impl SearchMatch {
     /// let scalars = m.candidates_as_scalars();
     /// assert_eq!(scalars[0], Scalar::from(3u64));
     /// ```
-    pub fn candidates_as_scalars(&self) -> [Scalar; 2] {
+    pub const fn candidates_as_scalars(&self) -> [Scalar; 2] {
         self.candidates
     }
 
@@ -462,7 +462,7 @@ impl Progress {
     /// p.add(5);
     /// assert_eq!(p.get(), 5);
     /// ```
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             counter: AtomicU64::new(0),
         }
@@ -672,7 +672,7 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
     for i in 0..256 {
         let scalar = Scalar::reduce(pow);
         out[i] = OffsetVariant {
-            label: format!("2^{}", i),
+            label: format!("2^{i}"),
             v_scalar: scalar,
             offset: u256_to_decimal(&pow),
         };
@@ -685,7 +685,7 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
     for i in 0..256 {
         let scalar = Scalar::reduce(cum);
         out[256 + i] = OffsetVariant {
-            label: format!("sum(2^0..2^{})", i),
+            label: format!("sum(2^0..2^{i})"),
             v_scalar: scalar,
             offset: u256_to_decimal(&cum),
         };
@@ -820,7 +820,7 @@ pub fn perform_chunked_sweep(
         // the search engine (~20× vs. independent scalar muls).
         // See ADR-0002 for the full rationale.
         let mut current = ecc::scalar_mul_g(&Scalar::from(chunk_start));
-        for p in points.iter_mut() {
+        for p in &mut points {
             *p = current;
             current += ecc::generator();
         }
@@ -954,7 +954,7 @@ pub fn precompute_chunk<W: CacheWriter>(
             // additions is ~20× faster than `count` independent scalar muls.
             // See ADR-0002.
             let mut current = ecc::scalar_mul_g(&Scalar::from(chunk_start));
-            for p in points.iter_mut() {
+            for p in &mut points {
                 *p = current;
                 current += ecc::generator();
             }
@@ -1371,7 +1371,7 @@ mod tests {
             let hex_str = scalar_to_hex_trimmed(&s);
 
             // Pad with leading zeros to 64 hex chars.
-            let padded = format!("{:0>64}", hex_str);
+            let padded = format!("{hex_str:0>64}");
             let bytes = hex::decode(&padded).expect("hex must decode");
             let recovered = hex_to_scalar_for_test(&padded).expect("must parse");
             proptest::prop_assert_eq!(recovered, s, "Roundtrip must preserve scalar value");

@@ -169,13 +169,13 @@ fn test_orchestrator_finds_small_scalar_with_cache() {
     assert!(cache_dir.exists(), "Cache directory should be created");
     let entries: Vec<_> = std::fs::read_dir(&cache_dir)
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .collect();
     assert!(!entries.is_empty(), "At least one cache chunk should exist");
 }
 
 /// Verifies that a session that has a corrupted checkpoint (valid
-/// last_j but wrong integrity anchor) is rejected with a
+/// `last_j` but wrong integrity anchor) is rejected with a
 /// [`FindError::ResearchIntegrityError`], forcing the user to delete
 /// the corrupt checkpoint.
 #[test]

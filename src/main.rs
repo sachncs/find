@@ -149,7 +149,7 @@ fn render_success_report(m: find::search::SearchMatch, total_time: std::time::Du
     for (i, c) in candidates_hex.iter().enumerate() {
         let _ = writeln!(out, "  [{}] 0x{}", i + 1, c);
     }
-    let _ = writeln!(out, "Total Search Duration: {:?}", total_time);
+    let _ = writeln!(out, "Total Search Duration: {total_time:?}");
     out.push_str(&separator);
     out.push('\n');
     print!("{out}");

@@ -98,8 +98,7 @@ fn differential_scalar_mul_g_against_libsecp256k1() {
 
         assert_eq!(
             hex_k256, hex_ref,
-            "Differential mismatch for d = {}: k256={}, secp256k1-sys={}",
-            d, hex_k256, hex_ref
+            "Differential mismatch for d = {d}: k256={hex_k256}, secp256k1-sys={hex_ref}"
         );
     }
 }
@@ -125,8 +124,7 @@ fn differential_scalar_mul_g_self_consistency() {
         if d <= 1000 {
             assert_eq!(
                 p_scalar, p_add,
-                "scalar_mul_g({}) must equal repeated addition for small d",
-                d
+                "scalar_mul_g({d}) must equal repeated addition for small d"
             );
         }
     }
@@ -145,8 +143,7 @@ fn differential_parse_pubkey_against_libsecp256k1() {
         let expected = ecc::scalar_mul_g(&scalar);
         assert_eq!(
             parsed, expected,
-            "Parsed pubkey for d={} must match k256 result",
-            d
+            "Parsed pubkey for d={d} must match k256 result"
         );
     }
 }

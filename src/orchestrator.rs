@@ -175,7 +175,7 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
         // One cache file per chunk, named by the chunk's inclusive lower
         // bound. Reusing an existing cache file replays the segment from
         // disk on subsequent runs.
-        let cache_path = checkpoints_dir.join(format!("chunk_{}.bin", chunk_start));
+        let cache_path = checkpoints_dir.join(format!("chunk_{chunk_start}.bin"));
 
         info!(
             "--- STARTING SEGMENT [{} ... {}] ---",

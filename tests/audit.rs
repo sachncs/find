@@ -53,8 +53,7 @@ fn test_rigorous_recovery_1234567890() {
     let recovered_scalar = ecc::hex_to_scalar(&known_d_hex).unwrap();
     assert!(
         m.candidates.contains(&recovered_scalar),
-        "Candidates MUST contain the original scalar (hex: {})",
-        known_d_hex
+        "Candidates MUST contain the original scalar (hex: {known_d_hex})"
     );
 
     let recovered_p = ecc::scalar_mul_g(&recovered_scalar);
@@ -97,7 +96,7 @@ fn test_rigorous_recovery_1234567890() {
 /// Pads a hex string to even length for [`hex::decode`] compatibility.
 fn pad_hex(h: &str) -> String {
     if h.len() % 2 != 0 {
-        format!("0{}", h)
+        format!("0{h}")
     } else {
         h.to_string()
     }
@@ -121,26 +120,21 @@ fn test_recovery_small_scalars() {
         let sweep_end = known_d + 10;
         let result = search::perform_chunked_sweep(&index, 0, sweep_end, 32);
 
-        let m = result.unwrap_or_else(|| panic!("Sweep MUST recover match for d={}", known_d));
+        let m = result.unwrap_or_else(|| panic!("Sweep MUST recover match for d={known_d}"));
 
         let recovered = ecc::hex_to_scalar(&pad_hex(&d_hex)).unwrap();
         assert!(
             m.candidates.contains(&recovered),
-            "Candidates for d={} must contain the original scalar (hex: {})",
-            known_d,
-            d_hex
+            "Candidates for d={known_d} must contain the original scalar (hex: {d_hex})"
         );
         assert!(
             m.candidates.contains(&recovered),
-            "Candidates for d={} must contain the original scalar (hex: {})",
-            known_d,
-            d_hex
+            "Candidates for d={known_d} must contain the original scalar (hex: {d_hex})"
         );
         let recovered_p = ecc::scalar_mul_g(&recovered);
         assert_eq!(
             recovered_p, target_p,
-            "Recovered scalar for d={} MUST reproduce the target public key",
-            known_d
+            "Recovered scalar for d={known_d} MUST reproduce the target public key"
         );
 
         for candidate in &m.candidates {

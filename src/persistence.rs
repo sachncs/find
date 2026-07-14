@@ -406,8 +406,7 @@ pub fn perform_cached_sweep(
 
     if file_size % 32 != 0 {
         return Err(FindError::CacheCorrupted(format!(
-            "Cache file size {} is not a multiple of 32 bytes",
-            file_size
+            "Cache file size {file_size} is not a multiple of 32 bytes"
         )));
     }
     if file_size == 0 {

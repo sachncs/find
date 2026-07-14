@@ -133,7 +133,10 @@ pub fn install_rayon_panic_handler() {
             let msg = info
                 .downcast_ref::<&str>()
                 .copied()
-                .or_else(|| info.downcast_ref::<String>().map(|s| s.as_str()))
+                .or_else(|| {
+                    info.downcast_ref::<String>()
+                        .map(std::string::String::as_str)
+                })
                 .unwrap_or("unknown panic");
             tracing::error!(message = %msg, "Rayon worker panicked");
         })

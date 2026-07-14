@@ -52,7 +52,7 @@ pub const MIN_J: u64 = 1;
 
 /// Default number of points per Montgomery batch-normalization.
 ///
-/// 32 is empirically the sweet spot on x86_64 and aarch64: stack
+/// 32 is empirically the sweet spot on `x86_64` and aarch64: stack
 /// allocation cost (32 × 96 bytes ≈ 3 KB) fits in L1 cache, and the
 /// cost of 32 scalar multiplications roughly balances one batch
 /// normalization. See [ADR-0002](../docs/adr/0002-batch-normalization.md).
@@ -85,7 +85,7 @@ pub const MAX_VARIANT_COUNT: u32 = 512;
 /// `Config::batch_size` field; the newtype cannot be silently
 /// constructed out of range.
 ///
-/// The legal range is `1..=[`BatchSize::MAX`]`. The default is
+/// The legal range is `1..=[``BatchSize::MAX``]`. The default is
 /// [`BatchSize::DEFAULT`].
 ///
 /// # Examples
@@ -108,13 +108,13 @@ impl BatchSize {
     /// of the search engine; see ADR-0009 (commit 14).
     pub const MAX: u32 = MAX_BATCH_SIZE;
     /// Default batch size, used by `Config::new` and tests.
-    pub const DEFAULT: BatchSize = BatchSize(DEFAULT_BATCH_SIZE);
+    pub const DEFAULT: Self = Self(DEFAULT_BATCH_SIZE);
 
     /// Constructs a `BatchSize` from a raw `u32`, returning
     /// [`FindError::InvalidConfig`] on out-of-range values.
     pub fn new(size: u32) -> Result<Self> {
         if (Self::MIN..=Self::MAX).contains(&size) {
-            Ok(BatchSize(size))
+            Ok(Self(size))
         } else {
             Err(FindError::InvalidConfig(format!(
                 "batch_size {size} out of range {}..={}",

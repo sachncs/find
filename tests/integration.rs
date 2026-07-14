@@ -252,7 +252,7 @@ fn run_controlled_test(j: u64, v_power: u32, label: &str) {
     let index = VariantIndex::new(variants, &x_bytes);
 
     let result = search::perform_chunked_sweep(&index, j, j, 32);
-    assert!(result.is_some(), "Failed boundary/edge test: {}", label);
+    assert!(result.is_some(), "Failed boundary/edge test: {label}");
 }
 
 /// Converts a [`BigUint`] to a [`Scalar`], reducing modulo the curve order.

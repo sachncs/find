@@ -81,3 +81,102 @@ panic = 'abort'
 # misleading cycle counts.
 [profile.release.package."*"]
 opt-level = 3
+
+[lints.rust]
+unused_must_use = "warn"
+
+[lints.clippy]
+# Curated pedantic + nursery sets, with project-specific allow-list.
+# The "compile just because nobody wrote it yet" lints are turned
+# down where they would churn the existing codebase without
+# meaningfully raising quality.
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_lossless = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+too_many_lines = "allow"
+module_inception = "allow"
+unreadable_literal = "allow"
+inline_always = "allow"
+needless_pass_by_value = "allow"
+items_after_statements = "allow"
+multiple_unsafe_ops_per_block = "allow"
+needless_return = "allow"
+significant_drop_tightening = "allow"
+unnecessary_struct_initialization = "allow"
+# We have a few `unused_self` cases (set_add/get) that are part of the
+# documented public Progress API. Allow them rather than churning the
+# signature.
+unused_self = "allow"
+# Proptest macros expand to large match patterns that pedantic dislikes.
+# Not worth the churn.
+wildcard_imports = "allow"
+# pattern matching with `if let _ = ...` is common in the test mod.
+# allow.
+redundant_pub_crate = "allow"
+# public Items in private mods use `pub(crate)` etc.
+empty_line_after_doc_comments = "allow"
+uninlined_format_args = "allow"
+missing_const_for_fn = "allow"
+unsafe_derive_deserialize = "allow"
+large_stack_arrays = "allow"
+used_underscore_binding = "allow"
+ignored_unit_patterns = "allow"
+if_not_else = "allow"
+many_single_char_names = "allow"
+needless_late_init = "allow"
+derivable_impls = "allow"
+default_trait_access = "allow"
+doc_markdown = "allow"
+return_self_not_must_use = "allow"
+unnecessary_wraps = "allow"
+needless_collect = "allow"
+redundant_else = "allow"
+if_same_then_else = "allow"
+manual_let_else = "allow"
+no_effect_underscore_binding = "allow"
+# We have many `d1 in 1u64..1_000_000u64,` literals.
+# The "missing_errors_doc"/"missing_panics_doc" are already allowed.
+# nursery-only lints we ignore
+or_fun_call = "allow"
+empty_drop = "allow"
+option_if_let_else = "allow"
+option_as_ref_deref = "allow"
+branches_sharing_code = "allow"
+redundant_locals = "allow"
+unnecessary_map_or = "allow"
+needless_borrow = "allow"
+needless_pass_by_ref_mut = "allow"
+needless_for_each = "allow"
+needless_range_loop = "allow"
+explicit_iter_loop = "allow"
+explicit_auto_deref = "allow"
+explicit_into_iter_loop = "allow"
+inconsistent_struct_constructor = "allow"
+# allow
+float_cmp = "allow"
+# allow
+unnecessary_cast = "allow"
+# allow
+case_sensitive_file_extension_comparisons = "allow"
+# allow
+needless_question_mark = "allow"
+# The doctests are minimal enough that this would churn them.
+needless_doctest_main = "allow"
+# Cargo's lints: clippy::pedantic warns about manual_range_patterns
+# we use these in the hot path on purpose.
+# allow
+semicolon_if_nothing_returned = "allow"
+# allow
+single_match_else = "allow"
+# allow
+needless_match = "allow"

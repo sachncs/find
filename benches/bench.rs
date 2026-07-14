@@ -42,7 +42,7 @@ fn bench_batch_normalization(c: &mut Criterion) {
             for p in &points {
                 std::hint::black_box(p.to_affine());
             }
-        })
+        });
     });
 
     group.bench_function("batch_normalization_32", |b| {
@@ -52,7 +52,7 @@ fn bench_batch_normalization(c: &mut Criterion) {
             // `black_box(())` forces the optimizer to treat the result
             // as observed, so the entire batch op is not elided.
             std::hint::black_box(());
-        })
+        });
     });
     group.finish();
 }
@@ -79,7 +79,7 @@ fn bench_index_lookup(c: &mut Criterion) {
             // trivially observable), but we still pass it to the lookup
             // to exercise the same call path used by the orchestrator.
             std::hint::black_box(index.match_x(&test_x, 100));
-        })
+        });
     });
 }
 
@@ -101,7 +101,7 @@ fn bench_plus_g_chain(c: &mut Criterion) {
                 .map(|&s| ecc::scalar_mul_g(&Scalar::from(s)))
                 .collect();
             std::hint::black_box(points);
-        })
+        });
     });
 
     group.bench_function("chain_32_plus_g", |b| {
@@ -118,7 +118,7 @@ fn bench_plus_g_chain(c: &mut Criterion) {
                 }
             }
             std::hint::black_box(points);
-        })
+        });
     });
 
     group.finish();
@@ -128,7 +128,7 @@ fn bench_plus_g_chain(c: &mut Criterion) {
 ///
 /// Sweeps `[1, 10_000_000]` looking for `d = 12345`. Captures the full
 /// hot-loop cost (bootstrap muls, +G chain, Montgomery normalize,
-/// match_x) including early-exit overhead.
+/// `match_x`) including early-exit overhead.
 fn bench_end_to_end_small_scalar(c: &mut Criterion) {
     let d = 12345u64;
     let target = ecc::scalar_mul_g(&Scalar::from(d));
@@ -142,7 +142,7 @@ fn bench_end_to_end_small_scalar(c: &mut Criterion) {
             // do the same here.
             let m = std::hint::black_box(search::perform_chunked_sweep(&index, 1, 10_000_000, 32));
             assert!(m.is_some(), "match must be found");
-        })
+        });
     });
 }
 
@@ -158,14 +158,14 @@ fn bench_variant_generation(c: &mut Criterion) {
         b.iter(|| {
             let variants = std::hint::black_box(search::generate_variants(&target));
             assert_eq!(variants.len(), 512);
-        })
+        });
     });
 }
 
 /// Benchmarks `x_bytes` extraction from a projective point.
 ///
 /// Compares the current direct-AffineCoordinates implementation against
-/// the SEC1 round-trip baseline (to_encoded_point + EncodedPoint::x()).
+/// the SEC1 round-trip baseline (`to_encoded_point` + `EncodedPoint::x()`).
 /// The former is the optimisation shipped in 0001; the latter is the
 /// pre-optimisation implementation kept here as a regression baseline.
 fn bench_x_bytes(c: &mut Criterion) {
@@ -177,7 +177,7 @@ fn bench_x_bytes(c: &mut Criterion) {
         b.iter(|| {
             let x = std::hint::black_box(ecc::x_bytes(&p));
             assert!(x.is_some());
-        })
+        });
     });
 
     group.bench_function("sec1_roundtrip_x", |b| {
@@ -186,7 +186,7 @@ fn bench_x_bytes(c: &mut Criterion) {
             let encoded = affine.to_encoded_point(false);
             let x = encoded.x().unwrap();
             std::hint::black_box(x);
-        })
+        });
     });
 
     group.finish();

@@ -100,7 +100,7 @@ pub fn parse_pubkey(hex_str: &str) -> Result<ProjectivePoint> {
 /// \(G\) is the predefined base point that generates the cyclic group of
 /// prime order \(n\).
 #[inline(always)]
-pub fn generator() -> ProjectivePoint {
+pub const fn generator() -> ProjectivePoint {
     ProjectivePoint::GENERATOR
 }
 
@@ -522,7 +522,7 @@ mod tests {
             // 33 bytes: n (32 bytes) followed by 0xFF (1 extra byte).
             // The first 32 bytes are n, so the truncated value is n itself.
             let n_hex = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141";
-            let long = format!("{}ff", n_hex);
+            let long = format!("{n_hex}ff");
             assert_eq!(long.len(), 66); // 33 bytes
             let res = hex_to_scalar(&long);
             assert!(res.is_err(), "Truncation of a value >= n must be rejected");
