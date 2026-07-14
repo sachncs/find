@@ -13,6 +13,7 @@
 use find::ecc;
 use find::search::{self, VariantIndex};
 use num_bigint::BigUint;
+use proptest::prelude::*;
 
 /// Verifies end-to-end recovery of the known scalar `1234567890`.
 ///
@@ -147,6 +148,36 @@ fn test_recovery_small_scalars() {
         println!(
             "[RECOVERY] d={} found via {} at j={}",
             known_d, m.label, m.small_scalar
+        );
+    }
+}
+
+// Property test: for any small-scalar d, the public pipeline
+// (scalar_mul_g -> generate_variants -> perform_chunked_sweep in [0, d+10])
+// recovers d as one of the candidates. The +10 margin covers off-by-one
+// races where the sweep might land at j = d - V_offset for V_offset > d.
+//
+// 20 cases is enough to catch regressions in the variant-construction
+// code path without slowing the test suite below 1 minute.
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(20))]
+
+    /// Property: any 1..=10_000_000 scalar is recoverable.
+    #[test]
+    fn prop_audit_recovers_any_small_scalar(d in 1u64..=10_000_000u64) {
+        let target_p = ecc::scalar_mul_g(&k256::Scalar::from(d));
+        let variants = search::generate_variants(&target_p);
+        let index = VariantIndex::new(variants);
+
+        // Sweep just past d so we always match.
+        let m = search::perform_chunked_sweep(&index, 0, d + 10)
+            .unwrap_or_else(|| panic!("audit must recover d={d}"));
+
+        let d_hex = format!("{:x}", d);
+        prop_assert!(
+            m.candidates.iter().any(|c| c.to_lowercase() == d_hex),
+            "d={d} (hex={d_hex}) must appear in candidates {:?}",
+            m.candidates
         );
     }
 }

@@ -55,7 +55,7 @@ was changed reasoning`. Generated from `git log --pretty=format:'%h | %ad | %s'
 | `e17c94c` | 2026-07-14 | docs: fix 4 broken intra-doc links surfaced by `RUSTDOCFLAGS=-D warnings cargo doc`. |
 | `d45262c` | 2026-07-14 | docs(changelog): document the doc pass under Unreleased. |
 | `9813fb5` | 2026-07-14 | fix(tests): switch `rand::Rng` to `rand::RngExt` for `random_range` after rand 0.10 broke the integration test; restored `cargo clippy --all-targets -- -D warnings`. |
-| `4c45e2e` | 2026-07-14 | chore(repo): canonicalize all repository URLs to `sachncs/find` (was `sachn-cs/find` alias everywhere). 20 references across 14 files rewritten. |
+| `4c45e2e` | 2026-07-14 | chore(repo): canonicalize all repository URLs to `sachncs/find` (was `sachncs/find` alias everywhere). 20 references across 14 files rewritten. |
 
 ## [Unreleased]
 
