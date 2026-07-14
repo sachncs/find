@@ -54,6 +54,35 @@ pub const MAX_SEARCH: u64 = u64::MAX;
 /// because every variant is guaranteed to have a non-zero X-coordinate.
 pub const MIN_J: u64 = 1;
 
+/// Default number of points per Montgomery batch-normalization.
+///
+/// 32 is empirically the sweet spot on x86_64 and aarch64: stack
+/// allocation cost (32 × 96 bytes ≈ 3 KB) fits in L1 cache, and the
+/// cost of 32 scalar multiplications roughly balances one batch
+/// normalization. See [ADR-0002](../docs/adr/0002-batch-normalization.md).
+///
+/// Can be overridden via the `--batch-size` CLI flag or
+/// [`Config::with_batch_size`]. Allowed range: 1..=256.
+pub const DEFAULT_BATCH_SIZE: u32 = 32;
+
+/// Default number of shift variants per session.
+///
+/// 512 (256 powers of two + 256 cumulative sums) is the documented
+/// default. Smaller values reduce the per-session variant-set memory
+/// footprint at the cost of missing some small-scalar targets.
+/// Allowed range: 1..=512.
+pub const DEFAULT_VARIANT_COUNT: u32 = 512;
+
+/// Maximum batch size the engine can address.
+///
+/// Bounded by the on-stack `[ProjectivePoint; MAX_BATCH]` arrays in the
+/// search hot path. Increasing this requires recompiling with new
+/// stack-array sizes.
+pub const MAX_BATCH_SIZE: u32 = 256;
+
+/// Maximum variant count the engine can address.
+pub const MAX_VARIANT_COUNT: u32 = 512;
+
 /// A bounded inclusive range of `u64` scalars to sweep.
 ///
 /// This is a thin newtype that documents intent and provides validation.
@@ -156,10 +185,27 @@ pub struct Config {
     /// Enabling this consumes approximately 32GB of disk per billion scalars
     /// but allows subsequent sweeps to run at I/O-bound speeds.
     pub cache_points: bool,
+    /// Number of points per Montgomery batch-normalization.
+    ///
+    /// Defaults to [`DEFAULT_BATCH_SIZE`] (32). Tunable via
+    /// [`Config::with_batch_size`]. Smaller values reduce per-batch
+    /// stack usage; larger values amortise the single Montgomery
+    /// inversion across more points.
+    pub batch_size: u32,
+    /// Number of shift variants per session.
+    ///
+    /// Defaults to [`DEFAULT_VARIANT_COUNT`] (512). Tunable via
+    /// [`Config::with_variant_count`]. Smaller values reduce the
+    /// variant-set memory footprint at the cost of missing some
+    /// small-scalar targets.
+    pub variant_count: u32,
 }
 
 impl Config {
     /// Constructs a new `Config` with the given pubkey, output dir, and cache flag.
+    ///
+    /// Uses the default batch size and variant count. For tunables, see
+    /// [`Config::with_batch_size`] and [`Config::with_variant_count`].
     ///
     /// # Arguments
     ///
@@ -181,6 +227,8 @@ impl Config {
     /// );
     /// assert_eq!(cfg.pubkey.len(), 66);
     /// assert!(!cfg.cache_points);
+    /// assert_eq!(cfg.batch_size, find::config::DEFAULT_BATCH_SIZE);
+    /// assert_eq!(cfg.variant_count, find::config::DEFAULT_VARIANT_COUNT);
     /// ```
     pub fn new(
         pubkey: impl Into<String>,
@@ -191,7 +239,49 @@ impl Config {
             pubkey: pubkey.into(),
             output_dir: output_dir.into(),
             cache_points,
+            batch_size: DEFAULT_BATCH_SIZE,
+            variant_count: DEFAULT_VARIANT_COUNT,
         }
+    }
+
+    /// Sets the batch size, returning the updated `Config`.
+    ///
+    /// # Arguments
+    ///
+    /// * `size` — Number of points per Montgomery batch-normalization.
+    ///   Allowed range: 1..=[`MAX_BATCH_SIZE`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `size` is outside the allowed range. Callers should
+    /// validate at the CLI boundary.
+    pub fn with_batch_size(mut self, size: u32) -> Self {
+        assert!(
+            (1..=MAX_BATCH_SIZE).contains(&size),
+            "batch_size {size} out of range 1..={MAX_BATCH_SIZE}"
+        );
+        self.batch_size = size;
+        self
+    }
+
+    /// Sets the variant count, returning the updated `Config`.
+    ///
+    /// # Arguments
+    ///
+    /// * `count` — Number of shift variants to generate. Allowed range:
+    ///   1..=[`MAX_VARIANT_COUNT`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `count` is outside the allowed range. Callers should
+    /// validate at the CLI boundary.
+    pub fn with_variant_count(mut self, count: u32) -> Self {
+        assert!(
+            (1..=MAX_VARIANT_COUNT).contains(&count),
+            "variant_count {count} out of range 1..={MAX_VARIANT_COUNT}"
+        );
+        self.variant_count = count;
+        self
     }
 
     /// Validates that all required fields are non-empty and well-formed.

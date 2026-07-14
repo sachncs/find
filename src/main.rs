@@ -76,6 +76,22 @@ struct Args {
     /// WARNING: Consumes approximately 32GB per billion points.
     #[arg(short, long, default_value_t = false)]
     cache_points: bool,
+
+    /// Number of points per Montgomery batch-normalization.
+    ///
+    /// 32 is the default. Smaller values reduce per-batch stack
+    /// usage; larger values amortise the single Montgomery
+    /// inversion across more points.
+    #[arg(long, default_value_t = find::config::DEFAULT_BATCH_SIZE)]
+    batch_size: u32,
+
+    /// Number of shift variants to generate (256 + 256 max).
+    ///
+    /// 512 is the documented default. Smaller values reduce the
+    /// variant-set memory footprint at the cost of missing some
+    /// small-scalar targets.
+    #[arg(long, default_value_t = find::config::DEFAULT_VARIANT_COUNT)]
+    variants: u32,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -89,7 +105,24 @@ fn main() -> anyhow::Result<()> {
 
     info!("Initializing find tool v{}", env!("CARGO_PKG_VERSION"));
 
-    let config = Config::new(args.pubkey, args.output_dir, args.cache_points);
+    // Build the config; the with_* builders assert on out-of-range
+    // values, so we validate the user-provided args up front.
+    let mut config = Config::new(args.pubkey, args.output_dir, args.cache_points);
+    if !(1..=find::config::MAX_BATCH_SIZE).contains(&args.batch_size) {
+        return Err(anyhow::anyhow!(
+            "--batch-size must be in 1..={}",
+            find::config::MAX_BATCH_SIZE
+        ));
+    }
+    if !(1..=find::config::MAX_VARIANT_COUNT).contains(&args.variants) {
+        return Err(anyhow::anyhow!(
+            "--variants must be in 1..={}",
+            find::config::MAX_VARIANT_COUNT
+        ));
+    }
+    config = config
+        .with_batch_size(args.batch_size)
+        .with_variant_count(args.variants);
 
     let start = Instant::now();
     match orchestrator::run(&config)? {
@@ -157,11 +190,26 @@ mod tests {
             "--log-dir",
             "/tmp/log",
             "--cache-points",
+            "--batch-size",
+            "64",
+            "--variants",
+            "256",
         ]);
         assert_eq!(args.pubkey, "deadbeef");
         assert_eq!(args.output_dir, "/tmp/out");
         assert_eq!(args.log_dir, "/tmp/log");
         assert!(args.cache_points);
+        assert_eq!(args.batch_size, 64);
+        assert_eq!(args.variants, 256);
+    }
+
+    /// Verifies that `Args` accepts the `--batch-size` and `--variants`
+    /// defaults when not specified.
+    #[test]
+    fn test_args_defaults_for_tuning() {
+        let args = Args::parse_from(["find", "--pubkey", "abc"]);
+        assert_eq!(args.batch_size, find::config::DEFAULT_BATCH_SIZE);
+        assert_eq!(args.variants, find::config::DEFAULT_VARIANT_COUNT);
     }
 
     /// Verifies that [`render_success_report`] formats a match without panicking.
