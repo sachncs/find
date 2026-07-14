@@ -51,6 +51,9 @@ find --pubkey 0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798
 # Generate binary cache during search (~32 GB per billion scalars)
 find --pubkey 0279be66... --cache-points
 
+# Tune batch size and variant count (advanced)
+find --pubkey 0279be... --batch-size 64 --variants 256
+
 # Custom data and log directories
 find --pubkey 0279be66... --output-dir <DIR> --log-dir <DIR>
 ```
@@ -76,6 +79,47 @@ For a guided walkthrough of your first search, see [docs/getting-started.md](doc
 | `MAX_SEARCH` | `u64::MAX` | Sweep upper bound |
 
 See [docs/configuration.md](docs/configuration.md) for the full configuration reference.
+
+## Performance
+
+The hot loop is dominated by:
+
+- One bootstrap scalar multiplication per 32-scalar batch (~256 field mults).
+- 31 mixed `+G` additions (~12 field mults each).
+- Montgomery simultaneous inversion over the 32-point batch.
+- A binary-search `match_x` in a 16 KiB L1-resident key array.
+
+The cumulative wall-clock cost of the per-session cold start is dominated by **variant generation** (now 256 scalar multiplications + 256 point doublings + 256 mixed additions, vs. 512 scalar multiplications in the original implementation — see [docs/optimization-decisions/0001-affinepoint-x-direct.md](docs/optimization-decisions/0001-affinepoint-x-direct.md) and following).
+
+For the per-batch hot loop, the dominant cost is the **bootstrap scalar multiplication** (~80% of per-batch cycles). Increasing `BATCH_SIZE` beyond 64 has diminishing returns; the `+G` chain + Montgomery normalize + match together take the remaining 20%.
+
+Tunables:
+
+| Flag | Default | Range | Effect |
+|---|---|---|---|
+| `--batch-size` | 32 | 1..=256 | Points per Montgomery batch |
+| `--variants` | 512 | 1..=512 | Powers-of-two + cumulative sum variants |
+| `--cache-points` | false | bool | Persist X-coords to disk for I/O-bound re-runs |
+
+For sustained workloads, the cached sweep path is ~100× faster than the CPU-bound path on NVMe hardware (see [docs/performance.md](docs/performance.md) for the full guide).
+
+Reproduce the published cycle counts:
+
+```bash
+cargo bench                       # criterion microbenchmarks
+scripts/build-pgo.sh              # profile-guided optimized build
+scripts/run-benchmarks.sh         # benchmark wrapper
+```
+
+## Research reproducibility
+
+The codebase ships with three independent verification layers:
+
+- **KAT tests** (`tests/kat.rs`): 11 known-answer tests against SEC1 §2.7.1 vectors and `k256` reference outputs.
+- **Differential tests** (`tests/differential.rs`): cross-check `k256` against the reference C `libsecp256k1` for 12 boundary scalars (1, 2, 3, 7, 100, 1k, 1M, 1.2G, 2^32, 2^63, u64::MAX, …).
+- **Audit tests** (`tests/audit.rs`): end-to-end pipeline (parse → variants → sweep → recover) for the known scalar `1234567890` plus a 20-case proptest over `[2, 10_000]`.
+
+Run all three with `cargo test --all-targets --all-features`.
 
 ## Documentation
 
