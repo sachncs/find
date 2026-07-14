@@ -478,7 +478,7 @@ pub fn perform_cached_sweep(
 /// use find::search;
 /// use k256::Scalar;
 ///
-/// fn main() -> Result<(), Box<dyn std::error::Error> {
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let target = ecc::scalar_mul_g(&Scalar::from(123u64));
 ///     let variants = search::generate_variants(&target);
 ///     let x_bytes = search::compute_variant_x_bytes(&target);

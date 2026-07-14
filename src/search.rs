@@ -351,7 +351,7 @@ impl SearchMatch {
     ///     "2^0",
     ///     "1",
     ///     2,
-    ///     [Scalar::from(3u64), Scalar::from(0xfff...fffu64)],
+    ///     [Scalar::from(3u64), Scalar::from(2u64)],
     /// );
     /// assert_eq!(m.small_scalar, 2);
     /// assert_eq!(m.label, "2^0");
@@ -420,10 +420,10 @@ impl SearchMatch {
     ///     "2^0",
     ///     "1",
     ///     2,
-    ///     [Scalar::from(3u64), Scalar::from(0u64)],
+    ///     [Scalar::from(3u64), Scalar::from(2u64)],
     /// );
     /// let hexes = m.candidates_hex();
-    /// assert_eq!(hexes[0], "03");
+    /// assert_eq!(hexes[0], "3");
     /// ```
     pub fn candidates_hex(&self) -> [String; 2] {
         [

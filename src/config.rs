@@ -210,7 +210,7 @@ impl Config {
     /// );
     /// assert_eq!(cfg.pubkey.len(), 66);
     /// assert!(!cfg.cache_points);
-    /// assert_eq!(cfg.batch_size, find::config::DEFAULT_BATCH_SIZE);
+    /// assert_eq!(cfg.batch_size, find::config::BatchSize::DEFAULT);
     /// assert_eq!(cfg.variant_count, find::config::DEFAULT_VARIANT_COUNT);
     /// ```
     pub fn new(
