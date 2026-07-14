@@ -4,7 +4,7 @@
 
 //! Session configuration types and validation.
 //!
-//! This module owns the [`Config`] struct, the [`SweepRange`] newtype, and the
+//! This module owns the [`Config`] struct, the [`BatchSize`] newtype, and the
 //! default constants used to drive a search session. It is intentionally
 //! minimal: it contains no I/O, no arithmetic, and no platform-specific code.
 //!
@@ -20,10 +20,6 @@
 //! [`Config`] is the input to [`crate::orchestrator::run`]; the orchestrator
 //! clones the [`Config`]'s `pubkey` string into the checkpoint it persists
 //! and uses the `output_dir` to locate checkpoints and binary caches.
-//! [`SweepRange`] is currently re-exported from
-//! [`crate::orchestrator`] for backward compatibility but is otherwise not
-//! consumed by the orchestrator's loop (the loop iterates a fixed-size
-//! chunk at a time).
 //!
 //! # Constants
 //!
@@ -139,80 +135,6 @@ impl Default for BatchSize {
     #[inline]
     fn default() -> Self {
         Self::DEFAULT
-    }
-}
-
-/// A bounded inclusive range of `u64` scalars to sweep.
-///
-/// This is a thin newtype that documents intent and provides validation.
-/// It is distinct from `(start, end)` tuples so that callers cannot
-/// accidentally swap the bounds.
-///
-/// # Invariants
-///
-/// - `start >= MIN_J` (enforced by [`SweepRange::new`], which clamps).
-/// - The range is **inclusive on both ends**.
-///
-/// # Examples
-///
-/// ```
-/// use find::config::SweepRange;
-///
-/// let r = SweepRange::new(10, 20);
-/// assert_eq!(r.start, 10);
-/// assert_eq!(r.end, 20);
-/// assert_eq!(r.len(), 11); // inclusive on both ends
-/// assert!(!r.is_empty());
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SweepRange {
-    /// First scalar (inclusive). Must be ≥ `MIN_J`.
-    pub start: u64,
-    /// Last scalar (inclusive). Must be ≥ `start`.
-    pub end: u64,
-}
-
-impl SweepRange {
-    /// Constructs a new sweep range, clamping `start` to `MIN_J`.
-    ///
-    /// # Arguments
-    ///
-    /// * `start` — First scalar (inclusive). Values below `MIN_J` are
-    ///   clamped to `MIN_J` because `j = 0` yields the identity point.
-    /// * `end` — Last scalar (inclusive).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use find::config::SweepRange;
-    ///
-    /// let r = SweepRange::new(1, 100);
-    /// assert_eq!(r.len(), 100);
-    /// assert!(!r.is_empty());
-    ///
-    /// // `start` is clamped to MIN_J = 1.
-    /// let clamped = SweepRange::new(0, 10);
-    /// assert_eq!(clamped.start, 1);
-    /// ```
-    pub fn new(start: u64, end: u64) -> Self {
-        Self {
-            start: start.max(MIN_J),
-            end,
-        }
-    }
-
-    /// Returns the number of scalars in the range. Returns 0 if `start > end`.
-    pub fn len(&self) -> u64 {
-        if self.start > self.end {
-            0
-        } else {
-            self.end.saturating_sub(self.start).saturating_add(1)
-        }
-    }
-
-    /// Returns `true` if the range is empty (start > end).
-    pub fn is_empty(&self) -> bool {
-        self.start > self.end
     }
 }
 
@@ -568,32 +490,5 @@ mod tests {
         assert_eq!(BatchSize::MAX, MAX_BATCH_SIZE);
         assert_eq!(BatchSize::new(32).unwrap().get(), 32);
         assert!(BatchSize::new(0).is_err());
-    }
-
-    /// Verifies that `SweepRange::new` clamps `start` to `MIN_J`.
-    #[test]
-    fn test_sweep_range_clamps_start() {
-        let r = SweepRange::new(0, 100);
-        assert_eq!(r.start, MIN_J);
-        assert_eq!(r.end, 100);
-    }
-
-    /// Verifies that `SweepRange::len` and `is_empty` behave as expected.
-    #[test]
-    fn test_sweep_range_len_and_empty() {
-        let r = SweepRange::new(1, 10);
-        assert_eq!(r.len(), 10);
-        assert!(!r.is_empty());
-
-        let empty = SweepRange::new(100, 1);
-        assert_eq!(empty.len(), 0);
-        assert!(empty.is_empty());
-    }
-
-    /// Verifies that `SweepRange::len` saturates on overflow.
-    #[test]
-    fn test_sweep_range_len_saturates() {
-        let r = SweepRange::new(0, u64::MAX);
-        assert_eq!(r.len(), u64::MAX);
     }
 }

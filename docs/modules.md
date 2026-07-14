@@ -8,7 +8,7 @@ The `find` crate is organized into eight modules with clear responsibility bound
 find/
 ├── lib.rs           # Public re-exports
 ├── main.rs          # CLI binary entry point
-├── config.rs        # Session configuration types (Config, SweepRange, constants)
+├── config.rs        # Session configuration types (Config, BatchSize newtype, constants)
 ├── telemetry.rs     # Tracing initialization helpers
 ├── error.rs         # Unified error type
 ├── ecc.rs           # Elliptic-curve primitives

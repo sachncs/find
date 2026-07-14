@@ -78,10 +78,6 @@ use crate::search::{self, Progress, SearchMatch, VariantIndex};
 use std::path::Path;
 use tracing::{info, warn};
 
-// Re-export commonly used config types from this module for backward
-// compatibility with downstream code that imported them from `orchestrator`.
-pub use crate::config::SweepRange;
-
 /// Runs a complete search session.
 ///
 /// The session proceeds in chunks of `DEFAULT_CACHE_CHUNK_SIZE` scalars. For each
