@@ -120,62 +120,116 @@ When a variant produces `P - V·G = O` (the identity point), the X-coordinate is
 
 ## Variant generation algorithm
 
-```text
-function generate_variants(target_p):
-    variants = []
+The full 512-variant metadata set (label, scalar offset `V`, decimal offset
+string) is **interned once per process** via `OnceLock<Box<[OffsetVariant; 512]>>`
+(commit 7c). The function `generate_variants` simply returns a `&'static`
+slice taken from the interned buffer. The target-specific X-coordinates
+are produced separately by `compute_variant_x_bytes` (below).
 
-    // Power-of-two anchors
+```text
+// One-shot process initialization (performed lazily on first call).
+function build_static_variants():
+    out = Box<[OffsetVariant; 512]>::new(default_init)
+
+    // Powers-of-two pass: V = 2^i for i in 0..256
     pow = 1
     for i in 0..256:
-        scalar = Scalar::reduce(pow)        // U256 mod n
-        shifted = target_p - scalar_mul_g(scalar)
-        if shifted != IDENTITY:
-            x_bytes = to_x_bytes(shifted)
-            variants.push(OffsetVariant {
-                label: "2^" + i,
-                v_scalar: scalar,
-                x_bytes: x_bytes,
-                offset: pow.to_decimal(),
-            })
-        pow = pow << 1
+        out[i] = OffsetVariant {
+            label: "2^" + i,
+            v_scalar: Scalar::reduce(pow),
+            offset: pow.to_decimal(),
+        }
+        pow <<= 1
 
-    // Cumulative-sum anchors
+    // Cumulative-sum pass: V = 2^(i+1) - 1 for i in 0..256, producing
+    // 1, 3, 7, 15, ..., 2^256 - 1
     cum = 1
     for i in 0..256:
-        scalar = Scalar::reduce(cum)
-        shifted = target_p - scalar_mul_g(scalar)
-        if shifted != IDENTITY:
-            x_bytes = to_x_bytes(shifted)
-            variants.push(OffsetVariant {
-                label: "sum(2^0..2^" + i + ")",
-                v_scalar: scalar,
-                x_bytes: x_bytes,
-                offset: cum.to_decimal(),
-            })
+        out[256 + i] = OffsetVariant {
+            label: "sum(2^0..2^" + i + ")",
+            v_scalar: Scalar::reduce(cum),
+            offset: cum.to_decimal(),
+        }
         cum = (cum << 1) | 1
 
-    return variants
+    return out
+
+// Public API.
+function generate_variants(target_p):
+    static INTERN = OnceLock::new()
+    return INTERN.get_or_init(build_static_variants)
 ```
 
-**Implementation note:** The use of `U256` (from `k256::elliptic_curve::bigint::U256`) rather than `BigUint` keeps the loop in stack-allocated types. `Scalar::reduce(pow)` is a constant-time reduction modulo the curve order. For variants where `pow >= n`, the reduction discards the high bits without affecting the resulting scalar.
+**Implementation note:** The `OffsetVariant` no longer carries an
+`x_bytes` field — the target-dependent X-coordinate is produced per
+session via `compute_variant_x_bytes` and matched against the index by
+position. This split keeps the metadata (deterministic per index) one
+allocation per process and per-session arithmetic paid only by callers
+who actually need the X-coordinates.
+
+```text
+function compute_variant_x_bytes(target_p):
+    x_bytes = Vec<[u8; 32]>(of length 512, zero-filled)
+
+    // Stack-allocated table of 2^i * G; reused across both loops.
+    pow_of_two_g = [2^0 * G, 2^1 * G, ..., 2^255 * G]
+
+    // Powers-of-two pass
+    for (i, pow_g) in pow_of_two_g.enumerate():
+        shifted = target_p - pow_g
+        if affine_x_bytes(shifted) is Some(x):
+            x_bytes[i] = x
+
+    // Cumulative-sum pass: cum_g grows by 2^(i+1) * G each iteration
+    cum_g = pow_of_two_g[0]
+    for i in 0..256:
+        shifted = target_p - cum_g
+        if affine_x_bytes(shifted) is Some(x):
+            x_bytes[256 + i] = x
+        if i < 255:
+            cum_g += pow_of_two_g[i + 1]
+
+    return x_bytes
+```
+
+The use of `U256` (from `k256::elliptic_curve::bigint::U256`) rather than `BigUint`
+keeps the arithmetic in stack-allocated types. `Scalar::reduce(pow)` is a
+constant-time reduction modulo the curve order. For variants where
+`pow >= n`, the reduction discards the high bits without affecting the
+resulting scalar.
 
 ## Variant index construction
 
-The 512 variants are stored in a flat `Vec<([u8; 32], usize)>` sorted by X-coordinate. The sort enables `O(log 512)` binary search lookups.
+The 512 target-specific X-coordinates (from `compute_variant_x_bytes`) are
+stored in a flat `Vec<[u8; 32]>` sorted by X-coordinate alongside a
+permutation `Vec<usize>` that maps each sorted position back to the
+original variant position in the static slice. The sort enables
+`O(log 512)` binary search lookups.
 
 ```text
-function VariantIndex::new(variants):
+function VariantIndex::new(variants: &'static [OffsetVariant],
+                          x_bytes:    &[[u8; 32]]):
+    assert_eq!(variants.len(), x_bytes.len())
+
     entries = []
-    for (i, var) in variants.enumerate():
-        entries.push((var.x_bytes, i))
+    for (i, xb) in x_bytes.iter().enumerate():
+        entries.push((xb, i))
     entries.sort_unstable_by_key(|(x, _)| x)
+
+    keys  = [k for (k, _) in entries]
+    order = [i for (_, i) in entries]
+
     return VariantIndex {
-        sorted_entries: entries,
-        variants: variants,
+        keys:       keys,
+        order:      order,
+        variants:   variants,    // &'static slice
+        x_bytes:    x_bytes.to_vec(),
     }
 ```
 
-The sort is **unstable** because we sort by key only; ties are broken by insertion order, which is fine for correctness. The entire index fits in L1 cache (~16 KB), and lookups complete in sub-20 ns.
+The sort is **unstable** because we sort by key only; ties are broken by
+insertion order, which is fine for correctness. The entire index fits in
+L1 cache (~16 KB), and lookups complete in sub-20 ns.
 
 ## Batch normalization
 
@@ -202,57 +256,79 @@ The full design rationale is in [ADR-0002](adr/0002-batch-normalization.md).
 
 ### Why 32?
 
-`BATCH_SIZE = 32` is empirically the sweet spot on modern x86_64 and aarch64:
+`BatchSize::DEFAULT = 32` is empirically the sweet spot on modern x86_64
+and aarch64. The batch size is now configurable per session via
+`Config::batch_size` (1..=256), but the default remains 32:
 
-- **Stack allocation cost** is 32 × 96 bytes (projective point) ≈ 3 KB, comfortable in L1.
-- **Scalar multiplication cost** for 32 points roughly balances one batch normalization, keeping the pipeline saturated.
-- **Diminishing returns** — the inversion cost is `O(1)`; further amortization is limited by the scalar multiplication throughput.
+- **Per-batch allocation cost** is `32 × 96 bytes` for the `points` Vec
+  and the same for `affines`, ≈ 6 KB total. Comfortable in L1 with headroom.
+- **Scalar multiplication cost** for 32 points roughly balances one batch
+  normalization, keeping the pipeline saturated.
+- **Diminishing returns** — the inversion cost is `O(1)`; further
+  amortization is limited by the scalar multiplication throughput and
+  by L1-cache pressure as the array grows.
 
 ## The +G increment chain
 
-Within a batch, the engine does **not** perform 32 independent scalar multiplications. Instead, it computes the first point `chunk_start · G` directly and then adds `G` to obtain each subsequent point.
+Within a batch, the engine does **not** perform independent scalar
+multiplications for each scalar. Instead, it computes the first point
+`chunk_start · G` directly and then adds `G` to obtain each subsequent
+point. The per-batch batch size `B` is **runtime-configurable** via
+`Config::batch_size` (see [ADR-0009](../adr/0009-runtime-batch-size.md));
+the pseudocode uses `B` for generality.
 
 ```text
-function batch_points(chunk_start, count):
-    points[0] = chunk_start · G
-    current = points[0]
-    for i in 1..count:
-        current = current + G
-        points[i] = current
+function batch_points(chunk_start, B):
+    points   = Vec<ProjectivePoint>::with_capacity(B)
+    current  = scalar_mul_g(chunk_start)
+    for _ in 0..B:
+        points.push(current)
+        current += G
     return points
 ```
 
-This is a single `scalar_mul_g` followed by `count - 1` point additions. Point addition in projective coordinates is `O(1)` (modular multiplications), so the total cost is `O(1) + O(N)`, vs. `O(N)` scalar multiplications if computed independently. The savings are substantial: scalar multiplication is hundreds of times more expensive than projective point addition.
+This is a single `scalar_mul_g` followed by `B - 1` point additions. Point
+addition in projective coordinates is `O(1)` (modular multiplications),
+so the total cost is `O(1) + O(B)`, vs. `O(B)` scalar multiplications if
+computed independently. The savings are substantial: scalar multiplication
+is hundreds of times more expensive than projective point addition.
+
+The arrays `points`, the post-normalization `affines`, and the cache
+write block are heap-allocated `Vec<T>` of length `B`; commit 7b
+replaced the previous `[T; MAX_BATCH]` stack arrays.
 
 ## Sweep algorithm
 
 ### CPU-bound path
 
 ```text
-function perform_chunked_sweep(index, start, end):
+function perform_chunked_sweep(index, start, end, batch_size):
     start = max(start, 1)
     if start > end:
         return None
 
-    num_batches = ceil((end - start + 1) / 32)
-    batches = [start + 32*i for i in 0..num_batches]
+    B = batch_size as u64
+    num_batches = ceil((end - start + 1) / B)
+    batches = [start + B*i for i in 0..num_batches]
 
     return batches.into_par_iter().find_map_any(|chunk_start| {
-        chunk_end = min(chunk_start + 31, end)
-        count = chunk_end - chunk_start + 1
+        chunk_end = min(chunk_start + B - 1, end)
+        count     = (chunk_end - chunk_start + 1) as usize
 
-        // +G increment chain
-        points = [None; 32]
-        points[0] = scalar_mul_g(chunk_start)
-        for i in 1..count:
-            points[i] = points[i-1] + G
+        // +G increment chain (heap-allocated; see ADR-0009)
+        points = Vec<ProjectivePoint>::with_capacity(count)
+        current = scalar_mul_g(chunk_start)
+        for _ in 0..count:
+            points.push(current)
+            current += G
 
         // Batch normalize
-        affines = batch_normalize(points)
+        affines: Vec<AffinePoint> = vec![IDENTITY; count]
+        batch_normalize(&points, &mut affines)
 
         // Match
-        for (i, affine) in affines.iter().take(count).enumerate():
-            j = chunk_start + i
+        for (i, affine) in affines.iter().enumerate():
+            j = chunk_start + i as u64
             if let Some(x_bytes) = affine_x_bytes(affine):
                 if let Some(match) = index.match_x(&x_bytes, j):
                     return Some(match)
@@ -260,7 +336,9 @@ function perform_chunked_sweep(index, start, end):
     })
 ```
 
-The `find_map_any` early-exit terminates other workers as soon as one returns `Some(_)`. The variant index is read-only and shared across workers without locks.
+The `find_map_any` early-exit terminates other workers as soon as one
+returns `Some(_)`. The variant index is read-only and shared across workers
+without locks.
 
 ### Cached path
 
@@ -272,57 +350,72 @@ function perform_cached_sweep(index, cache_path, start_j):
 
     reader = BufReader::new(File::open(cache_path))
     j = start_j
-    buffer = [0u8; 32]
+    // 32 KiB stack scratch buffer; batch is one 32-byte X-coordinate.
+    buffer = [0u8; CACHED_SWEEP_BUF_SIZE]   // 32 KiB
 
     loop:
-        match reader.read_exact(&mut buffer):
-            Ok(()) => {
-                if let Some(match) = index.match_x(&buffer, j):
-                    return Ok(Some(match))
-                j += 1
-            }
-            Err(UnexpectedEof) => break,
-            Err(e) => return Err(Io(e)),
-    return Ok(None)
+        if buf_pos >= buf_len:
+            // Refill the buffer from disk.
+            ...
+        chunk = [0u8; 32]
+        chunk.copy_from_slice(&buffer[buf_pos..buf_pos + 32])  // commit 13
+        buf_pos += 32
+
+        if let Some(match) = index.match_x(&chunk, j):
+            return Ok(Some(match))
+        j += 1
 ```
 
-The cached path is **I/O-bound**, not compute-bound. It does not perform any modular arithmetic; the only cryptographic work is the `index.match_x` binary search.
+The cached path is **I/O-bound**, not compute-bound. It does not perform
+any modular arithmetic; the only cryptographic work is the
+`index.match_x` binary search. The 32-byte copy uses `copy_from_slice`
+(commit 13) instead of the previous `try_into + expect`.
 
 ### Precomputation path
 
 ```text
 function precompute_chunk(start, end, writer, index, progress, batch_size):
-    // Conceptual; actual code uses Rayon par_iter with try_for_each
+    // Actual implementation uses Rayon par_iter with try_for_each
     // and a shared OnceLock<SearchMatch> for cross-batch early-exit
-    // (replaced the previous Mutex+AtomicBool pair; see
+    // (replaced the previous Mutex + AtomicBool pair; see
     // optimization-decisions/0007-oncelock-early-exit.md).
+    match_once = OnceLock::new()
+
     for each batch in [start, end] in chunks of batch_size:
+        // Fast-path check (lock-free)
         if match_once.get() is Some: return
 
-        points = +G chain
-        affines = batch_normalize(points)
-        block = encode(affines)         // batch_size × 32 bytes
-        for (i, affine) in affines:
-            if let Some(match) = index.match_x(affine, j):
-                let _ = match_once.set(match); return
+        points = +G chain                      // heap-allocated Vec<ProjectivePoint>
+        affines = batch_normalize(points)     // heap-allocated Vec<AffinePoint>
+        block   = Vec<u8>(batch_size * 32)    // heap-allocated cache write block
 
-        writer.write_block(batch_offset, &block)
-        progress.add(batch_size)
+        for (i, affine) in affines.iter().enumerate():
+            j = chunk_start + i as u64
+            if let Some(match) = index.match_x(affine_x_bytes(affine), j):
+                let _ = match_once.set(match)  // first-write-wins
+                return
+            block[32*i .. 32*(i+1)] = affine_x_bytes(affine)
+
+        writer.write_block(batch_idx * batch_size * 32, &block)
+        progress.add(batch_size as u64)
 ```
 
-The actual implementation uses `rayon::into_par_iter().try_for_each` for parallelism. The `match_once` is a `OnceLock<SearchMatch>` that workers check (lock-free) before processing each batch.
+The `match_once` is a `OnceLock<SearchMatch>` that workers check (lock-free)
+before processing each batch. There is no mutex to poison; panicking
+workers cannot corrupt the result.
 
 ## Complexity analysis
 
 | Operation | Complexity | Notes |
 |---|---|---|
-| Variant generation | O(512) | One-time per target pubkey; 512 scalar multiplications and normalizations |
+| Variant metadata | O(1) per call after first | Interned per process in `OnceLock` (commit 7c) |
+| `compute_variant_x_bytes` | O(512) | One-time per target; 256 scalar multiplications + 256 mixed additions |
 | Index lookup | O(log 512) = O(1) | Binary search on flat sorted array |
 | Sweep (CPU) | O(R) | Linear over range `R`; bounded by scalar multiplication throughput |
 | Sweep (I/O) | O(R) | Sequential binary read; NVMe throughput ~GB/s |
-| Batch normalization | 1 inversion + 31 multiplications per 32 points | Montgomery simultaneous inversion |
+| Batch normalization | 1 inversion + `batch_size - 1` muls per `batch_size` points | Montgomery simultaneous inversion; `batch_size = Config::batch_size ∈ 1..=256` |
 | Checkpoint write | O(1) | Single JSON file (~150 bytes) |
-| Cache write per batch | O(1) | One `pwrite_at` of ~1 KB per 32 points |
+| Cache write per batch | O(1) | One `pwrite_at` of `batch_size × 32` bytes per `batch_size` points |
 
 The index is not a hash table — it is a flat `Vec<([u8; 32], usize)>` sorted by X-coordinate. This provides superior cache locality compared to a hash table for the fixed 512-entry variant set.
 
@@ -445,7 +538,31 @@ The 512-variant design is calibrated for the intended use case (small-scalar sea
 
 ### Batch size
 
-`BATCH_SIZE = 32` is empirically optimal on modern x86_64 and aarch64. The benchmark in [`benches/bench.rs`](../benches/bench.rs) measures the trade-off directly.
+`BatchSize::DEFAULT.get() = 32` is empirically optimal on modern x86_64
+and aarch64. The benchmark in [`benches/bench.rs`](../benches/bench.rs)
+measures the trade-off directly. Since commit 7b, `--batch-size` is
+honoured at runtime: the per-batch `Vec<ProjectivePoint>` / `Vec<AffinePoint>`
+/ `Vec<u8>` arrays are sized by `Config::batch_size`. The empirical sweet
+spot remains 32; values up to 256 are accepted for users who want to
+amortize Montgomery inversion across more points at higher per-batch
+memory cost (see [ADR-0009](../adr/0009-runtime-batch-size.md)).
+
+### Precomputation internals
+
+`generate_variants` is **interned per process** via a
+`OnceLock<Box<[OffsetVariant; 512]>>`. The 256 pow + 256 sum strings
+(`2^i` and `sum(2^0..2^i)`), scalars, and decimal offsets are built
+**once per process** and then returned as a `&'static [OffsetVariant]`
+on every subsequent call. Per-session work (the target-specific
+X-coordinates) goes through `compute_variant_x_bytes`. The cumulative
+effect is that the per-session cold-start cost of `generate_variants`
+is effectively free on the happy path — see
+[optimization-decisions/0002](../optimization-decisions/0002-variant-labels-once-lock.md)
+and [optimization-decisions/0007](../optimization-decisions/0007-oncelock-early-exit.md).
+
+`precompute_chunk`'s cross-batch match coordination uses
+`OnceLock<SearchMatch>` (lock-free), which eliminates the previous
+`Mutex + AtomicBool` pair and makes worker-panic recovery unnecessary.
 
 ### Cache vs. no-cache
 
