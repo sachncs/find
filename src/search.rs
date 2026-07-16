@@ -227,23 +227,18 @@ impl VariantIndex {
             "variants and x_bytes must have the same length"
         );
 
-        // Build the (key, original-index) pairs and sort by key.
+        // Build permutation indices, sort by key, then materialize keys/order.
+        // The intermediate `pairs` Vec is avoided by sorting indices
+        // directly via `sort_by_key` over a `Vec<usize>`.
         let n = variants.len();
-        let mut pairs: Vec<([u8; 32], usize)> = Vec::with_capacity(n);
-        for (i, xb) in x_bytes.iter().enumerate() {
-            pairs.push((*xb, i));
-        }
-        pairs.sort_unstable_by_key(|p| p.0);
+        let mut indices: Vec<usize> = (0..n).collect();
+        indices.sort_unstable_by_key(|&i| x_bytes[i]);
 
-        // Split into two parallel arrays: keys (32 bytes each) and order
-        // (8 bytes each). The split halves the per-element size from 40
-        // bytes to 32 bytes, improving cache-line density on the binary-
-        // search hot loop.
-        let mut keys = Vec::with_capacity(n);
-        let mut order = Vec::with_capacity(n);
-        for (k, idx) in pairs {
-            keys.push(k);
-            order.push(idx);
+        let mut keys: Vec<[u8; 32]> = Vec::with_capacity(n);
+        let mut order: Vec<usize> = Vec::with_capacity(n);
+        for i in indices {
+            keys.push(x_bytes[i]);
+            order.push(i);
         }
 
         Self {
