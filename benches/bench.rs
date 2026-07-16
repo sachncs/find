@@ -146,6 +146,39 @@ fn bench_end_to_end_small_scalar(c: &mut Criterion) {
     });
 }
 
+/// End-to-end random-scalar discovery (d < 2^32).
+///
+/// Picks a random scalar < 2^14 via deterministic xorshift LCG. The
+/// variant index is built once outside the timed loop; the sweep
+/// itself runs over a 2^14 range. The range is bounded so each
+/// iteration fits in Criterion's 5-second measurement window with
+/// 10 samples (the full 2^32 range takes minutes per iteration).
+///
+/// NOTE: comprehensive stress testing with random scalars < 2^32 is
+/// performed via the `examples/stress.rs` runnable; this Criterion
+/// benchmark provides a reproducible integration-level measurement
+/// of the sweep hot path with a non-trivial matched `j`.
+fn bench_random_scalar_sweep(c: &mut Criterion) {
+    let mut rng_state: u64 = 0xDEADBEEF_CAFEBABE;
+    rng_state ^= rng_state << 13;
+    rng_state ^= rng_state >> 7;
+    rng_state ^= rng_state << 17;
+    let d: u64 = 100 + (rng_state % (1u64 << 14));
+    let target = ecc::scalar_mul_g(&Scalar::from(d));
+    let variants = search::generate_variants(&target);
+    let x_bytes = search::compute_variant_x_bytes(&target);
+    let index = VariantIndex::new(variants, &x_bytes);
+
+    c.bench_function("random_scalar_sweep_lt_2_32", |b| {
+        b.iter(|| {
+            let m = std::hint::black_box(
+                search::perform_chunked_sweep(&index, 1, 1u64 << 14, 32),
+            );
+            assert!(m.is_some(), "match must be found for d={d}");
+        });
+    });
+}
+
 /// Variant generation cost (one-time per session).
 ///
 /// Measures the cold-start cost of building the 512-variant set for a
@@ -198,6 +231,7 @@ criterion_group!(
     bench_index_lookup,
     bench_plus_g_chain,
     bench_end_to_end_small_scalar,
+    bench_random_scalar_sweep,
     bench_variant_generation,
     bench_x_bytes,
 );
