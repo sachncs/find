@@ -138,6 +138,12 @@ impl Default for BatchSize {
     }
 }
 
+impl std::fmt::Display for BatchSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Configuration required to drive a search session.
 ///
 /// All fields are owned strings so that the configuration can outlive the

@@ -71,6 +71,8 @@ use crate::error::{FindError, Result};
 use k256::elliptic_curve::bigint::U256;
 use k256::elliptic_curve::group::Curve;
 use k256::elliptic_curve::ops::Reduce;
+use k256::elliptic_curve::point::AffineCoordinates;
+use k256::elliptic_curve::group::prime::PrimeCurveAffine;
 use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -137,14 +139,14 @@ pub const VARIANT_COUNT: usize = 512;
 #[derive(Debug, Clone)]
 pub struct OffsetVariant {
     /// Human-readable label such as `"2^64"` or `"sum(2^0..2^7)"`.
-    pub label: String,
+    pub label: &'static str,
     /// The scalar offset \(V\), already reduced modulo the curve order \(n\).
     pub v_scalar: Scalar,
     /// The original unreduced scalar value as a decimal string.
     ///
     /// This is preserved for display and serialization; the reduced value
     /// used during arithmetic is `v_scalar`.
-    pub offset: String,
+    pub offset: &'static str,
 }
 
 /// Cache-optimized lookup index for variant matching.
@@ -270,8 +272,8 @@ impl VariantIndex {
         let j_scalar = Scalar::from(j);
 
         Some(SearchMatch {
-            label: var.label.clone(),
-            offset: var.offset.clone(),
+            label: var.label,
+            offset: var.offset,
             small_scalar: j,
             candidates: [var.v_scalar.add(&j_scalar), var.v_scalar.sub(&j_scalar)],
         })
@@ -299,7 +301,7 @@ impl VariantIndex {
     /// let target = ecc::scalar_mul_g(&Scalar::from(7u64));
     /// let x_bytes = compute_variant_x_bytes(&target);
     /// let index = VariantIndex::new(generate_variants(&target), &x_bytes);
-    /// let first_label = &index.variants()[0].label;
+    /// let first_label = index.variants()[0].label;
     /// assert!(first_label == "2^0" || first_label.starts_with("sum"));
     /// ```
     pub const fn variants(&self) -> &'static [OffsetVariant] {
@@ -323,9 +325,9 @@ impl VariantIndex {
 #[non_exhaustive]
 pub struct SearchMatch {
     /// The label of the variant that matched.
-    pub label: String,
+    pub label: &'static str,
     /// The decimal string representation of the variant's unreduced offset.
-    pub offset: String,
+    pub offset: &'static str,
     /// The scalar \(j\) at which the match occurred.
     pub small_scalar: u64,
     /// Candidate private keys `[V + j, V - j] (mod n)` as [`Scalar`].
@@ -357,14 +359,14 @@ impl SearchMatch {
     /// assert_eq!(m.label, "2^0");
     /// ```
     pub fn new(
-        label: impl Into<String>,
-        offset: impl Into<String>,
+        label: &'static str,
+        offset: &'static str,
         small_scalar: u64,
         candidates: [Scalar; 2],
     ) -> Self {
         Self {
-            label: label.into(),
-            offset: offset.into(),
+            label,
+            offset,
             small_scalar,
             candidates,
         }
@@ -510,6 +512,22 @@ impl Progress {
     }
 }
 
+impl std::fmt::Display for OffsetVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} (V={})", self.label, self.offset)
+    }
+}
+
+impl std::fmt::Display for SearchMatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "variant={} offset={} j={}",
+            self.label, self.offset, self.small_scalar
+        )
+    }
+}
+
 /// Abstraction over cache block writes.
 ///
 /// Implementations are responsible for persisting raw 32-byte X-coordinate
@@ -622,10 +640,9 @@ pub fn compute_variant_x_bytes(target_p: &ProjectivePoint) -> Vec<[u8; 32]> {
     // Powers-of-two pass: V = 2^i for i in 0..256.
     for (i, pow_g) in pow_of_two_g.iter().enumerate() {
         let shifted = p - pow_g;
-        if let Some(x) = affine_x_bytes(&shifted.to_affine()) {
-            x_bytes[i] = x;
-        } else {
-            tracing::warn!("Variant 2^{} produced identity point; skipping", i);
+        match ecc::x_bytes(&shifted) {
+            Some(x) => x_bytes[i] = x,
+            None => tracing::warn!("Variant 2^{} produced identity point; skipping", i),
         }
     }
 
@@ -636,13 +653,12 @@ pub fn compute_variant_x_bytes(target_p: &ProjectivePoint) -> Vec<[u8; 32]> {
     let mut cum_g = pow_of_two_g[0];
     for i in 0..256 {
         let shifted = p - cum_g;
-        if let Some(x) = affine_x_bytes(&shifted.to_affine()) {
-            x_bytes[256 + i] = x;
-        } else {
-            tracing::warn!(
+        match ecc::x_bytes(&shifted) {
+            Some(x) => x_bytes[256 + i] = x,
+            None => tracing::warn!(
                 "Variant sum(2^0..2^{}) produced identity point; skipping",
                 i
-            );
+            ),
         }
         if i < 255 {
             cum_g += pow_of_two_g[i + 1];
@@ -662,9 +678,9 @@ pub fn compute_variant_x_bytes(target_p: &ProjectivePoint) -> Vec<[u8; 32]> {
 fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
     let mut out: Box<[OffsetVariant; VARIANT_COUNT]> =
         Box::new(std::array::from_fn(|_| OffsetVariant {
-            label: String::new(),
+            label: "",
             v_scalar: Scalar::ZERO,
-            offset: String::new(),
+            offset: "",
         }));
 
     // Powers-of-two pass: V = 2^i for i in 0..256.
@@ -672,9 +688,9 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
     for i in 0..256 {
         let scalar = Scalar::reduce(pow);
         out[i] = OffsetVariant {
-            label: format!("2^{i}"),
+            label: Box::leak(format!("2^{i}").into_boxed_str()),
             v_scalar: scalar,
-            offset: u256_to_decimal(&pow),
+            offset: Box::leak(u256_to_decimal(&pow).into_boxed_str()),
         };
         pow <<= 1;
     }
@@ -685,9 +701,9 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
     for i in 0..256 {
         let scalar = Scalar::reduce(cum);
         out[256 + i] = OffsetVariant {
-            label: format!("sum(2^0..2^{i})"),
+            label: Box::leak(format!("sum(2^0..2^{i})").into_boxed_str()),
             v_scalar: scalar,
-            offset: u256_to_decimal(&cum),
+            offset: Box::leak(u256_to_decimal(&cum).into_boxed_str()),
         };
         cum = (cum << 1) | U256::ONE;
     }
@@ -1021,8 +1037,6 @@ pub fn precompute_chunk<W: CacheWriter>(
 /// `k256::elliptic_curve::point`.
 #[inline]
 fn affine_x_bytes(affine: &AffinePoint) -> Option<[u8; 32]> {
-    use k256::elliptic_curve::group::prime::PrimeCurveAffine;
-    use k256::elliptic_curve::point::AffineCoordinates;
     if bool::from(<AffinePoint as PrimeCurveAffine>::is_identity(affine)) {
         return None;
     }
@@ -1034,11 +1048,17 @@ fn affine_x_bytes(affine: &AffinePoint) -> Option<[u8; 32]> {
 
 /// Converts a scalar to a lower-case hex string with leading zeros removed.
 ///
-/// The value zero is rendered as `"0"`.
+/// The value zero is rendered as `"0"`. Uses a stack-allocated `[u8; 64]`
+/// buffer to avoid heap allocation for the bounded 64-char hex output.
 #[inline]
 fn scalar_to_hex_trimmed(s: &Scalar) -> String {
-    let hex = hex::encode(s.to_bytes());
-    let trimmed = hex.trim_start_matches('0');
+    let bytes: [u8; 32] = s.to_bytes().into();
+    let mut buf = [0u8; 64];
+    hex::encode_to_slice(bytes, &mut buf)
+        .expect("64-byte buffer is always sufficient for 32-byte input");
+    let trimmed = std::str::from_utf8(&buf)
+        .expect("hex encoding is always valid UTF-8")
+        .trim_start_matches('0');
     if trimmed.is_empty() {
         "0".to_string()
     } else {
@@ -1058,23 +1078,27 @@ fn scalar_to_hex_trimmed(s: &Scalar) -> String {
 ///
 /// O(N²) in the number of digits, where N ≤ 78 for a 256-bit value.
 /// Each iteration is one 256-bit divmod (a constant-cost operation on
-/// `crypto_bigint::U256`) plus one byte write to a `String`. Avoids the
-/// heap allocation that `BigUint::from_bytes_be(...).to_string()` would
-/// incur.
+/// `crypto_bigint::U256`) plus one byte write to a stack buffer. Avoids
+/// the heap allocation that `BigUint::from_bytes_be(...).to_string()`
+/// would incur.
 fn u256_to_decimal(v: &U256) -> String {
     use k256::elliptic_curve::bigint::Zero;
     if bool::from(v.is_zero()) {
         return "0".to_string();
     }
-    let mut digits: Vec<u8> = Vec::with_capacity(80);
+    // Stack-allocated buffer: a u256 has at most 78 decimal digits.
+    let mut digits = [0u8; 78];
+    let mut len = 0usize;
     let mut rem: U256 = *v;
     while !bool::from(rem.is_zero()) {
         let (q, r) = div_rem_u256_by_u64(rem, 10);
-        digits.push(b'0' + r as u8);
+        digits[len] = b'0' + r as u8;
+        len += 1;
         rem = q;
     }
-    digits.reverse();
-    String::from_utf8(digits).expect("digits are 0..=9 ASCII")
+    digits[..len].reverse();
+    // SAFETY: all bytes are ASCII digits (b'0'..=b'9').
+    String::from_utf8_lossy(&digits[..len]).into_owned()
 }
 
 /// Computes `self / d` and `self % d` for `U256 / u64`.
@@ -1347,8 +1371,8 @@ mod tests {
             // The variant metadata is fully static so every call returns
             // the same labels and offsets (no per-call allocation
             // differences).
-            proptest::prop_assert_eq!(variants[0].label.as_str(), "2^0");
-            proptest::prop_assert_eq!(variants[256].label.as_str(), "sum(2^0..2^0)");
+            proptest::prop_assert_eq!(variants[0].label, "2^0");
+            proptest::prop_assert_eq!(variants[256].label, "sum(2^0..2^0)");
         }
     }
 
