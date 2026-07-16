@@ -48,7 +48,7 @@ fn test_mandatory_random_6_to_8_digits() {
     let x_bytes = search::compute_variant_x_bytes(&target_p);
     let index = VariantIndex::new(variants, &x_bytes);
 
-    let result = search::perform_chunked_sweep(&index, j, j, 32);
+    let result = search::sweep_parallel(&index, j, j, 32);
     assert!(result.is_some(), "Match not found for 6-8 digit scalar");
 
     let m = result.unwrap();
@@ -109,7 +109,7 @@ proptest! {
         let x_bytes = search::compute_variant_x_bytes(&target_p);
         let index = VariantIndex::new(variants, &x_bytes);
 
-    let result = search::perform_chunked_sweep(&index, j, j, 32);
+    let result = search::sweep_parallel(&index, j, j, 32);
         prop_assert!(result.is_some());
         let m = result.unwrap();
         let expected_scalar = biguint_to_scalar(&d_val);
@@ -125,7 +125,7 @@ fn test_failure_malformed_hex() {
     assert!(res.is_err());
 }
 
-// Property: `perform_chunked_sweep` produces the same match against a
+// Property: `sweep_parallel` produces the same match against a
 // known target for arbitrary batch_size values in [1, 256]. Pins down
 // the contract introduced in commit 7b: the hot-path batch arrays now
 // honour config.batch_size at runtime, and must continue to discover
@@ -142,7 +142,7 @@ proptest! {
 
         // Sweep a tight range so the test completes quickly even with
         // batch_size = 1.
-        let result = search::perform_chunked_sweep(&index, 1, 32, batch_size);
+        let result = search::sweep_parallel(&index, 1, 32, batch_size);
         prop_assert!(result.is_some(), "batch_size {batch_size}: no match");
         let m = result.unwrap();
         let d_scalar = k256::Scalar::from(d);
@@ -154,20 +154,20 @@ proptest! {
     }
 }
 
-// Property test: `precompute_chunk` round-trip — the cached file
-// written by `precompute_chunk` can be re-read by `perform_cached_sweep`
+// Property test: `sweep_and_cache` round-trip — the cached file
+// written by `sweep_and_cache` can be re-read by `sweep_cached`
 // and produces the same match.
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(20))]
 
-        /// Property: precompute_chunk finds d and writes to the cache writer.
+        /// Property: sweep_and_cache finds d and writes to the cache writer.
     ///
-    /// Sweeps `[1, d + 64]`. precompute_chunk finds the match (Some)
-    /// and returns early. We assert precompute_chunk returns Some(m)
+    /// Sweeps `[1, d + 64]`. sweep_and_cache finds the match (Some)
+    /// and returns early. We assert sweep_and_cache returns Some(m)
     /// with d in m.candidates.
     #[test]
-    fn prop_precompute_chunk_roundtrip(d in 2u64..10_000u64) {
-    use find::search::{generate_variants, precompute_chunk, Progress, VariantIndex, CacheWriter};
+    fn prop_sweep_and_cache_roundtrip(d in 2u64..10_000u64) {
+    use find::search::{generate_variants, sweep_and_cache, Progress, VariantIndex, CacheWriter};
     use std::sync::Mutex;
 
     let target_p = ecc::scalar_mul_g(&k256::Scalar::from(d));
@@ -185,7 +185,7 @@ proptest! {
     let writer = MemWriter(Mutex::new(Vec::new()));
     let progress = Progress::new();
 
-    let res = precompute_chunk(1, d + 64, &writer, Some(&index), &progress, 32).unwrap();
+    let res = sweep_and_cache(1, d + 64, &writer, Some(&index), &progress, 32).unwrap();
     prop_assert!(res.is_some(), "precompute must find d={d}");
     let m = res.unwrap();
     let d_scalar = k256::Scalar::from(d);
@@ -211,8 +211,8 @@ fn test_idempotency_deterministic_output() {
     let x_bytes = search::compute_variant_x_bytes(&target_p);
     let index = VariantIndex::new(variants, &x_bytes);
 
-    let res1 = search::perform_chunked_sweep(&index, j, j, 32).unwrap();
-    let res2 = search::perform_chunked_sweep(&index, j, j, 32).unwrap();
+    let res1 = search::sweep_parallel(&index, j, j, 32).unwrap();
+    let res2 = search::sweep_parallel(&index, j, j, 32).unwrap();
 
     let expected_scalar = biguint_to_scalar(&d_val);
     assert!(res1.candidates.contains(&expected_scalar));
@@ -232,7 +232,7 @@ fn run_controlled_test(j: u64, v_power: u32, label: &str) {
     let x_bytes = search::compute_variant_x_bytes(&target_p);
     let index = VariantIndex::new(variants, &x_bytes);
 
-    let result = search::perform_chunked_sweep(&index, j, j, 32);
+    let result = search::sweep_parallel(&index, j, j, 32);
     assert!(result.is_some(), "Failed boundary/edge test: {label}");
 }
 

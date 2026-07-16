@@ -40,7 +40,7 @@ fn test_rigorous_recovery_1234567890() {
     let sweep_start: u64 = 160_826_000;
     let sweep_end: u64 = 160_827_000;
 
-    let result = search::perform_chunked_sweep(&index, sweep_start, sweep_end, 32);
+    let result = search::sweep_parallel(&index, sweep_start, sweep_end, 32);
     let m = result.expect("Sweep MUST recover the match for scalar 1234567890");
 
     assert_eq!(m.label, "2^30", "Must match via the 2^30 variant");
@@ -118,7 +118,7 @@ fn test_recovery_small_scalars() {
         let index = VariantIndex::new(search::generate_variants(&target_p), &x_bytes);
 
         let sweep_end = known_d + 10;
-        let result = search::perform_chunked_sweep(&index, 0, sweep_end, 32);
+        let result = search::sweep_parallel(&index, 0, sweep_end, 32);
 
         let m = result.unwrap_or_else(|| panic!("Sweep MUST recover match for d={known_d}"));
 
@@ -150,7 +150,7 @@ fn test_recovery_small_scalars() {
 }
 
 // Property test: for any small-scalar d, the public pipeline
-// (scalar_mul_g -> generate_variants -> perform_chunked_sweep in [0, d+10])
+// (scalar_mul_g -> generate_variants -> sweep_parallel in [0, d+10])
 // recovers d as one of the candidates. The +10 margin covers off-by-one
 // races where the sweep might land at j = d - V_offset for V_offset > d.
 //
@@ -168,7 +168,7 @@ proptest! {
         let index = VariantIndex::new(variants, &x_bytes);
 
         // Sweep just past d so we always match.
-        let m = search::perform_chunked_sweep(&index, 0, d + 10, 32)
+        let m = search::sweep_parallel(&index, 0, d + 10, 32)
             .unwrap_or_else(|| panic!("audit must recover d={d}"));
 
         let d_scalar = k256::Scalar::from(d);

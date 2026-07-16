@@ -14,14 +14,14 @@
 //!   [`Ordering::Relaxed`]; it is safe to call from any number of Rayon
 //!   worker threads concurrently.
 //! - [`VariantIndex`] is built once and then read-only; it is [`Sync`].
-//! - [`precompute_chunk`] uses a [`OnceLock<SearchMatch>`] as a one-shot
+//! - [`sweep_and_cache`] uses a [`OnceLock<SearchMatch>`] as a one-shot
 //!   best-effort broadcast channel: any worker that finds a match
 //!   publishes it via `OnceLock::set`; remaining workers observe it via
 //!   the lock-free `get()` check at the top of each batch. There is no
 //!   mutex and no atomics — the `OnceLock` guarantees at-most-one
 //!   publication internally. Panicking workers cannot poison the result
 //!   because there is no lock to poison.
-//! - [`perform_chunked_sweep`] uses Rayon's `find_map_any` for early exit
+//! - [`sweep_parallel`] uses Rayon's `find_map_any` for early exit
 //!   when the first match is found; later batches are not scheduled.
 //!
 //! # Side-channel stance
@@ -55,7 +55,7 @@
 //!    resulting X-coordinates are stored in [`OffsetVariant`].
 //! 2. **Index construction** ([`VariantIndex::new`]): sort the variants by
 //!    X-coordinate so that lookups during the sweep are `O(log N)`.
-//! 3. **Sweep** ([`perform_chunked_sweep`] / [`precompute_chunk`]): for
+//! 3. **Sweep** ([`sweep_parallel`] / [`sweep_and_cache`]): for
 //!    each scalar `j` in the chunk, compute `j·G`, extract its
 //!    X-coordinate, and probe the index. A match implies `d = V ± j`.
 //!
@@ -770,7 +770,7 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
 ///
 /// ```no_run
 /// use find::ecc;
-/// use find::search::{compute_variant_x_bytes, generate_variants, perform_chunked_sweep, VariantIndex};
+/// use find::search::{compute_variant_x_bytes, generate_variants, sweep_parallel, VariantIndex};
 /// use k256::Scalar;
 ///
 /// fn main() -> Result<(), Box<dyn core::error::Error>> {
@@ -778,13 +778,13 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
 ///     let variants = generate_variants(&target);
 ///     let x_bytes = compute_variant_x_bytes(&target);
 ///     let index = VariantIndex::new(variants, &x_bytes);
-///     let m = perform_chunked_sweep(&index, 1, 100_000, 32)
+///     let m = sweep_parallel(&index, 1, 100_000, 32)
 ///         .expect("match for d=12345 in [1, 100000]");
 ///     assert!(m.candidates.contains(&Scalar::from(3039u64)));
 ///     Ok(())
 /// }
 /// ```
-pub fn perform_chunked_sweep(
+pub fn sweep_parallel(
     index: &VariantIndex,
     start: u64,
     end: u64,
@@ -936,7 +936,7 @@ pub fn perform_chunked_sweep(
 ///
 /// # Performance
 ///
-/// Identical arithmetic to [`perform_chunked_sweep`]; the additional cost
+/// Identical arithmetic to [`sweep_parallel`]; the additional cost
 /// is one `write_block` call per batch (a single `pwrite_at` of ~1 KiB on
 /// Unix, an `O(1)` operation). The progress counter is updated once per
 /// batch, so it reflects the **actual** scalars processed (not a
@@ -968,7 +968,7 @@ pub fn perform_chunked_sweep(
 /// })
 /// match_once.into_inner()
 /// ```
-pub fn precompute_chunk<W: CacheWriter>(
+pub fn sweep_and_cache<W: CacheWriter>(
     start: u64,
     end: u64,
     writer: &W,
@@ -1020,7 +1020,7 @@ pub fn precompute_chunk<W: CacheWriter>(
             // Bootstrap: one scalar mul for the super-batch's first point.
             // Subsequent batches chain via the `+ G` loop below — `current`
             // after batch `k` equals the next batch's bootstrap. See
-            // `perform_chunked_sweep` for the full rationale.
+            // `sweep_parallel` for the full rationale.
             let base_j = start.saturating_add(sb_start * batch_size);
             let mut current = ecc::scalar_mul_g(&Scalar::from(base_j));
             let g = ecc::generator();
@@ -1028,7 +1028,7 @@ pub fn precompute_chunk<W: CacheWriter>(
             // Process the super-batch in groups of `NORMALIZE_GROUP_BATCHES`
             // consecutive batches so a single `batch_normalize` amortises
             // the modular inversion across the whole group (see
-            // `perform_chunked_sweep` for the measured per-point savings).
+            // `sweep_parallel` for the measured per-point savings).
             let group_batches: u64 = NORMALIZE_GROUP_BATCHES as u64;
             let mut group_points_buf = [ProjectivePoint::IDENTITY; GROUP_CAP];
             let mut group_affines_buf = [AffinePoint::IDENTITY; GROUP_CAP];
@@ -1272,18 +1272,18 @@ mod tests {
         assert_eq!(p.get(), 15);
     }
 
-    /// Verifies that [`perform_chunked_sweep`] returns `None` when start > end.
+    /// Verifies that [`sweep_parallel`] returns `None` when start > end.
     #[test]
-    fn test_perform_chunked_sweep_start_greater_than_end() {
+    fn test_sweep_parallel_start_greater_than_end() {
         let target = ecc::scalar_mul_g(&Scalar::from(1u64));
         let x_bytes = compute_variant_x_bytes(&target);
         let index = VariantIndex::new(generate_variants(&target), &x_bytes);
-        assert!(perform_chunked_sweep(&index, 100, 1, 32).is_none());
+        assert!(sweep_parallel(&index, 100, 1, 32).is_none());
     }
 
-    /// Verifies that [`precompute_chunk`] returns `Ok(None)` when start > end.
+    /// Verifies that [`sweep_and_cache`] returns `Ok(None)` when start > end.
     #[test]
-    fn test_precompute_chunk_start_greater_than_end() {
+    fn test_sweep_and_cache_start_greater_than_end() {
         struct DummyWriter;
         impl CacheWriter for DummyWriter {
             fn write_block(&self, _offset: u64, _data: &[u8]) -> std::io::Result<()> {
@@ -1291,7 +1291,7 @@ mod tests {
             }
         }
         let progress = Progress::new();
-        let result = precompute_chunk(100, 1, &DummyWriter, None, &progress, 32);
+        let result = sweep_and_cache(100, 1, &DummyWriter, None, &progress, 32);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -1337,9 +1337,9 @@ mod tests {
         assert!(index.match_x(&unknown, 1).is_none());
     }
 
-    /// Verifies that [`precompute_chunk`] discovers a match and returns early.
+    /// Verifies that [`sweep_and_cache`] discovers a match and returns early.
     #[test]
-    fn test_precompute_chunk_finds_match() {
+    fn test_sweep_and_cache_finds_match() {
         struct NullWriter;
         impl CacheWriter for NullWriter {
             fn write_block(&self, _offset: u64, _data: &[u8]) -> std::io::Result<()> {
@@ -1355,10 +1355,10 @@ mod tests {
         let index = VariantIndex::new(generate_variants(&target), &x_bytes);
         let progress = Progress::new();
 
-        let result = precompute_chunk(1, 10, &NullWriter, Some(&index), &progress, 32).unwrap();
+        let result = sweep_and_cache(1, 10, &NullWriter, Some(&index), &progress, 32).unwrap();
         assert!(
             result.is_some(),
-            "precompute_chunk must find match for d=3 in range [1,10]"
+            "sweep_and_cache must find match for d=3 in range [1,10]"
         );
         let m = result.unwrap();
         assert!(
@@ -1370,10 +1370,10 @@ mod tests {
         );
     }
 
-    /// Verifies that `precompute_chunk` reports the actual batch count, not
+    /// Verifies that `sweep_and_cache` reports the actual batch count, not
     /// `BATCH_SIZE`, for the last partial batch.
     #[test]
-    fn test_precompute_chunk_progress_partial_batch() {
+    fn test_sweep_and_cache_progress_partial_batch() {
         struct NullWriter;
         impl CacheWriter for NullWriter {
             fn write_block(&self, _offset: u64, _data: &[u8]) -> std::io::Result<()> {
@@ -1391,7 +1391,7 @@ mod tests {
         // Sweep range [1, 5]: 5 scalars in 1 partial batch. The engine
         // should call `progress.add(5)` (the actual count), not
         // `progress.add(BATCH_SIZE=32)`.
-        let result = precompute_chunk(1, 5, &NullWriter, Some(&index), &progress, 32).unwrap();
+        let result = sweep_and_cache(1, 5, &NullWriter, Some(&index), &progress, 32).unwrap();
         assert!(
             result.is_none(),
             "No match expected in [1, 5] for d=1000000"

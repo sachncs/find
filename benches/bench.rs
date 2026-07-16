@@ -83,7 +83,7 @@ fn bench_index_lookup(c: &mut Criterion) {
     });
 }
 
-/// Benchmarks the `+ G` increment chain used by `perform_chunked_sweep`.
+/// Benchmarks the `+ G` increment chain used by `sweep_parallel`.
 ///
 /// Compares the hot path (one bootstrap scalar multiplication + N-1 mixed
 /// additions) against the naive baseline (N independent scalar muls).
@@ -140,7 +140,7 @@ fn bench_end_to_end_small_scalar(c: &mut Criterion) {
         b.iter(|| {
             // The orchestrator clamps start to MIN_J = 1 internally; we
             // do the same here.
-            let m = std::hint::black_box(search::perform_chunked_sweep(&index, 1, 10_000_000, 32));
+            let m = std::hint::black_box(search::sweep_parallel(&index, 1, 10_000_000, 32));
             assert!(m.is_some(), "match must be found");
         });
     });
@@ -172,7 +172,7 @@ fn bench_random_scalar_sweep(c: &mut Criterion) {
     c.bench_function("random_scalar_sweep_lt_2_32", |b| {
         b.iter(|| {
             let m = std::hint::black_box(
-                search::perform_chunked_sweep(&index, 1, 1u64 << 14, 32),
+                search::sweep_parallel(&index, 1, 1u64 << 14, 32),
             );
             assert!(m.is_some(), "match must be found for d={d}");
         });

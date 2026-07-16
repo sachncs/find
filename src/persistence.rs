@@ -28,7 +28,7 @@
 //!   surfaces as a panic from the holding thread; we deliberately abort
 //!   rather than try to recover the file handle's state (see
 //!   [ADR-0008](../docs/adr/0008-mutex-poisoning-policy.md)).
-//! - [`perform_cached_sweep`] takes a `&File` and is single-threaded; it
+//! - [`sweep_cached`] takes a `&File` and is single-threaded; it
 //!   uses a 32 KiB stack scratch buffer to amortise read syscalls.
 //!
 //! # Platform behaviour
@@ -257,7 +257,7 @@ impl Checkpoint {
 /// [`std::sync::Mutex`] that serialises writes. Concurrent [`CacheWriter`]
 /// implementations may be created by sharing a `BinaryCacheWriter` via
 /// `Arc<BinaryCacheWriter>` or by passing it directly to
-/// [`crate::search::precompute_chunk`].
+/// [`crate::search::sweep_and_cache`].
 pub struct BinaryCacheWriter {
     file: std::sync::Mutex<File>,
 }
@@ -360,7 +360,7 @@ impl CacheWriter for BinaryCacheWriter {
     }
 }
 
-/// Size of the stack-allocated scratch buffer used by [`perform_cached_sweep`].
+/// Size of the stack-allocated scratch buffer used by [`sweep_cached`].
 ///
 /// 32 KiB is enough to amortise one `read` syscall per ~1000 X-coordinates
 /// (each coordinate is 32 bytes). The buffer is stack-allocated to keep
@@ -395,7 +395,7 @@ const CACHED_SWEEP_BUF_SIZE: usize = 32 * 1024;
 /// earlier `BufReader::read_exact(&mut [0u8; 32])` loop which, although
 /// buffered internally, paid per-call overhead for every 32-byte match.
 #[instrument(skip(index), level = "info")]
-pub fn perform_cached_sweep(
+pub fn sweep_cached(
     index: &VariantIndex,
     cache_path: &Path,
     start_j: u64,
@@ -546,7 +546,7 @@ mod tests {
         let cache_path = dir.path().join("empty.bin");
         std::fs::write(&cache_path, []).unwrap();
 
-        let result = perform_cached_sweep(&index, &cache_path, 0);
+        let result = sweep_cached(&index, &cache_path, 0);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -563,7 +563,7 @@ mod tests {
         let cache_path = dir.path().join("corrupted.bin");
         std::fs::write(&cache_path, vec![0u8; 31]).unwrap();
 
-        let result = perform_cached_sweep(&index, &cache_path, 0);
+        let result = sweep_cached(&index, &cache_path, 0);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("not a multiple of 32"));
@@ -593,7 +593,7 @@ mod tests {
         cache_data.extend_from_slice(&x_1); // entry 1 -> j=2
         std::fs::write(&cache_path, &cache_data).unwrap();
 
-        let result = perform_cached_sweep(&index, &cache_path, 1).unwrap();
+        let result = sweep_cached(&index, &cache_path, 1).unwrap();
         let m = result.expect("Should have found a match at j=1");
 
         assert_eq!(m.small_scalar, 1, "Should match at j=1");

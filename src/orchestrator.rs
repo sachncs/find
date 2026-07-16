@@ -26,10 +26,10 @@
 //!     H --> J[loop: per chunk of 1B scalars]
 //!     I --> J
 //!     J --> K{cache file<br/>exists?}
-//!     K -- yes --> L[perform_cached_sweep]
+//!     K -- yes --> L[sweep_cached]
 //!     K -- no --> M{cache_points<br/>enabled?}
-//!     M -- yes --> N[precompute_chunk + cached_sweep]
-//!     M -- no --> O[perform_chunked_sweep]
+//!     M -- yes --> N[sweep_and_cache + cached_sweep]
+//!     M -- no --> O[sweep_parallel]
 //!     L --> P{match<br/>found?}
 //!     N --> P
 //!     O --> P
@@ -46,13 +46,13 @@
 //! picks one of three strategies, in this priority order:
 //!
 //! 1. **Cache hit** — replay the precomputed X-coordinates from disk via
-//!    [`persistence::perform_cached_sweep`].
+//!    [`persistence::sweep_cached`].
 //! 2. **Cache miss with `cache_points`** — precompute the cache via
-//!    [`search::precompute_chunk`] (writing X-coords to disk and checking
+//!    [`search::sweep_and_cache`] (writing X-coords to disk and checking
 //!    the index live). If a match surfaces mid-precompute, the redundant
 //!    cached-sweep pass is skipped.
 //! 3. **Cache miss without caching** — pure CPU-bound parallel sweep via
-//!    [`search::perform_chunked_sweep`], discarding the work after the
+//!    [`search::sweep_parallel`], discarding the work after the
 //!    segment.
 //!
 //! # Checkpoint durability
@@ -192,14 +192,14 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
         //       discarding the work after the segment.
         let sweep_result = if cache_path.exists() {
             info!("Cache hit: {}", cache_path.display());
-            persistence::perform_cached_sweep(&index, &cache_path, chunk_start)?
+            persistence::sweep_cached(&index, &cache_path, chunk_start)?
         } else if config.cache_points {
             info!("Cache miss. Precomputing chunk...");
             let writer = persistence::BinaryCacheWriter::create(&cache_path)?;
             let expected_len = (chunk_end.saturating_sub(chunk_start).saturating_add(1)) * 32;
             writer.preallocate(expected_len)?;
 
-            let early = search::precompute_chunk(
+            let early = search::sweep_and_cache(
                 chunk_start,
                 chunk_end,
                 &writer,
@@ -213,11 +213,11 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
                 // cached-sweep pass on the just-written file.
                 early
             } else {
-                persistence::perform_cached_sweep(&index, &cache_path, chunk_start)?
+                persistence::sweep_cached(&index, &cache_path, chunk_start)?
             }
         } else {
             info!("Cache miss. Running parallel sweep...");
-            search::perform_chunked_sweep(&index, chunk_start, chunk_end, config.batch_size.get())
+            search::sweep_parallel(&index, chunk_start, chunk_end, config.batch_size.get())
         };
 
         if let Some(m) = sweep_result {
