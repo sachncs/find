@@ -70,7 +70,6 @@ use crate::config::MAX_BATCH_SIZE;
 use crate::ecc;
 use crate::error::{FindError, Result};
 use k256::elliptic_curve::bigint::U256;
-use k256::elliptic_curve::group::prime::PrimeCurveAffine;
 use k256::elliptic_curve::group::Curve;
 use k256::elliptic_curve::ops::Reduce;
 use k256::elliptic_curve::point::AffineCoordinates;
@@ -875,10 +874,13 @@ pub fn perform_chunked_sweep(
 
             for (i, affine) in affines[..count].iter().enumerate() {
                 let j = chunk_start + i as u64;
-                if let Some(x_bytes) = affine_x_bytes(affine) {
-                    if let Some(m) = index.match_x(&x_bytes, j) {
-                        return Some(m);
-                    }
+                // Inlined affine_x_bytes: identity check removed because
+                // j ≥ 1 guarantees a non-identity point and
+                // `batch_normalize` inputs are non-identity by construction.
+                let mut x_bytes = [0u8; 32];
+                x_bytes.copy_from_slice(affine.x().as_ref());
+                if let Some(m) = index.match_x(&x_bytes, j) {
+                    return Some(m);
                 }
             }
         }
@@ -1035,10 +1037,11 @@ pub fn precompute_chunk<W: CacheWriter>(
 
                 for (i, affine) in affines[..count].iter().enumerate() {
                     let j = chunk_start + i as u64;
-                    let x_bytes = match affine_x_bytes(affine) {
-                        Some(x) => x,
-                        None => continue,
-                    };
+                    // Inlined affine_x_bytes: identity check removed because
+                    // `start.max(1)` (applied above) guarantees j ≥ 1, so
+                    // `j·G` is never the identity point.
+                    let mut x_bytes = [0u8; 32];
+                    x_bytes.copy_from_slice(affine.x().as_ref());
 
                     if let Some(idx_ref) = index {
                         if let Some(m) = idx_ref.match_x(&x_bytes, j) {
@@ -1087,18 +1090,6 @@ pub fn precompute_chunk<W: CacheWriter>(
 /// Uses [`AffineCoordinates::x`] directly to avoid the `to_encoded_point`
 /// round-trip — saves one SEC1 prefix-byte computation per point in the
 /// hot loop. The `AffineCoordinates` trait is re-exported from
-/// `k256::elliptic_curve::point`.
-#[inline]
-fn affine_x_bytes(affine: &AffinePoint) -> Option<[u8; 32]> {
-    if bool::from(<AffinePoint as PrimeCurveAffine>::is_identity(affine)) {
-        return None;
-    }
-    let x = affine.x();
-    let mut bytes = [0u8; 32];
-    bytes.copy_from_slice(x.as_ref());
-    Some(bytes)
-}
-
 /// Converts a scalar to a lower-case hex string with leading zeros removed.
 ///
 /// The value zero is rendered as `"0"`. Uses a stack-allocated `[u8; 64]`
