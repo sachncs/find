@@ -239,8 +239,8 @@ pub fn to_hex_x(p: &ProjectivePoint) -> String {
     let mut buf = [0u8; 64];
     hex::encode_to_slice(x, &mut buf)
         .expect("64-byte buffer is always sufficient for 32-byte input");
-    // SAFETY: hex encoding is always valid ASCII/UTF-8.
-    unsafe { String::from_utf8_unchecked(buf.to_vec()) }
+    // Safe: hex encoding (lowercase 0-9, a-f) is always valid UTF-8.
+    String::from_utf8(buf.to_vec()).expect("hex encoding is valid UTF-8")
 }
 
 /// Returns `true` if the point is the point-at-infinity (the additive identity).
