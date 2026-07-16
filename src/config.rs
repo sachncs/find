@@ -24,7 +24,7 @@
 //! # Constants
 //!
 //! The compile-time constants ([`TRILLION`], [`DEFAULT_CACHE_CHUNK_SIZE`],
-//! [`MAX_SEARCH`], [`MIN_J`]) define the boundaries of the search space
+//! [`MAX_SEARCH`], [`MIN_SEARCH_SCALAR`]) define the boundaries of the search space
 //! and the granularity of audit logging. They are documented inline.
 
 use crate::error::{FindError, Result};
@@ -48,7 +48,7 @@ pub const MAX_SEARCH: u64 = u64::MAX;
 ///
 /// `j = 0` yields the identity point, which cannot match a valid variant
 /// because every variant is guaranteed to have a non-zero X-coordinate.
-pub const MIN_J: u64 = 1;
+pub const MIN_SEARCH_SCALAR: u64 = 1;
 
 /// Default number of points per Montgomery batch-normalization.
 ///
@@ -159,7 +159,7 @@ impl std::fmt::Display for BatchSize {
 ///     "data",
 ///     false,
 /// );
-/// cfg.validate().expect("non-empty pubkey must validate");
+/// cfg.validate_fields().expect("non-empty pubkey must validate");
 /// ```
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -325,12 +325,12 @@ impl Config {
     /// use find::config::Config;
     ///
     /// let ok = Config::new("02abcd", "data", false);
-    /// assert!(ok.validate().is_ok());
+    /// assert!(ok.validate_fields().is_ok());
     ///
     /// let bad = Config::new("   ", "data", false);
-    /// assert!(bad.validate().is_err());
+    /// assert!(bad.validate_fields().is_err());
     /// ```
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate_fields(&self) -> Result<()> {
         if self.pubkey.trim().is_empty() {
             return Err(FindError::InvalidPublicKey(
                 "Public key cannot be empty".to_string(),
@@ -341,7 +341,7 @@ impl Config {
 
     /// Deep-validates that the pubkey parses as a valid SEC1 point.
     ///
-    /// This is the fail-fast version of [`Config::validate`] — it actually
+    /// This is the fail-fast version of [`Config::validate_fields`] — it actually
     /// decodes the hex string and runs it through
     /// [`ecc::parse_pubkey`](crate::ecc::parse_pubkey). Use this at the
     /// orchestrator's entry point so that a malformed pubkey is surfaced
@@ -387,21 +387,21 @@ mod tests {
     #[test]
     fn test_validate_rejects_empty_pubkey() {
         let config = Config::new("", "/tmp", false);
-        assert!(config.validate().is_err());
+        assert!(config.validate_fields().is_err());
     }
 
     /// Verifies that whitespace-only pubkeys are rejected.
     #[test]
     fn test_validate_rejects_whitespace_pubkey() {
         let config = Config::new("   ", "/tmp", false);
-        assert!(config.validate().is_err());
+        assert!(config.validate_fields().is_err());
     }
 
     /// Verifies that a non-empty pubkey passes validation.
     #[test]
     fn test_validate_accepts_valid_pubkey() {
         let config = Config::new("02abcd", "/tmp", false);
-        assert!(config.validate().is_ok());
+        assert!(config.validate_fields().is_ok());
     }
 
     /// Verifies that `validate_pubkey` accepts a well-formed SEC1 pubkey.

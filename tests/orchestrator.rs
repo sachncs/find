@@ -5,7 +5,7 @@
 //! - successful discovery of a small known scalar (`d = 5`),
 //! - input validation: malformed public keys are rejected before
 //!   the search starts,
-//! - configuration validation: [`Config::validate`] rejects empty
+//! - configuration validation: [`Config::validate_fields`] rejects empty
 //!   public keys,
 //! - checkpoint resume: a session that wrote a checkpoint can be
 //!   loaded and resumed, finding the same match without redoing
@@ -81,11 +81,11 @@ fn test_orchestrator_rejects_malformed_pubkey() {
     assert!(result.is_err(), "Malformed pubkey must be rejected");
 }
 
-/// Verifies that [`Config::validate`] rejects an empty public key.
+/// Verifies that [`Config::validate_fields`] rejects an empty public key.
 #[test]
 fn test_config_validate_rejects_empty_pubkey() {
     let config = Config::new("   ".to_string(), "/tmp".to_string(), false);
-    let result = config.validate();
+    let result = config.validate_fields();
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("cannot be empty"));
 }

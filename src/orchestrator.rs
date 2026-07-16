@@ -70,7 +70,7 @@
 //! Re-entrant calls are safe as long as each call uses a distinct
 //! output directory.
 
-use crate::config::{Config, DEFAULT_CACHE_CHUNK_SIZE, MAX_SEARCH, MIN_J, TRILLION};
+use crate::config::{Config, DEFAULT_CACHE_CHUNK_SIZE, MAX_SEARCH, MIN_SEARCH_SCALAR, TRILLION};
 use crate::ecc;
 use crate::error::{FindError, Result};
 use crate::persistence;
@@ -128,7 +128,7 @@ use tracing::{info, warn};
 /// }
 /// ```
 pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
-    config.validate()?;
+    config.validate_fields()?;
     config.validate_pubkey()?;
 
     let target_p = ecc::parse_pubkey(&config.pubkey)?;
@@ -162,7 +162,7 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
     let progress = Progress::new();
 
     loop {
-        let chunk_start = current_j.saturating_add(1).max(MIN_J);
+        let chunk_start = current_j.saturating_add(1).max(MIN_SEARCH_SCALAR);
         // Detect overflow: `saturating_add` returns `u64::MAX` on overflow,
         // so the comparison `chunk_end < current_j` fires only when we've
         // reached the end of the 64-bit scalar space and cannot extend.
