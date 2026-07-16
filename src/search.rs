@@ -183,21 +183,15 @@ pub struct OffsetVariant {
 /// - `keys`: 512 × 32 = 16 KiB (L1-resident on every modern `x86_64` / aarch64)
 /// - `order`: 512 × 8 = 4 KiB
 /// - `variants`: shared `&'static [OffsetVariant]` (built once per process)
-/// - `x_bytes`: 512 × 32 = 16 KiB of target-specific keys passed in to
-///   `new`
 ///
-/// The variant metadata is shared across all sessions via `&'static`,
-/// while the target-specific `x_bytes` is held per-session. The
-/// variant metadata stays in cold storage and is only fetched on a
-/// match — see [ADR-0001](../docs/adr/0001-multi-variant-search.md).
+/// The variant metadata is shared across all sessions via `&'static`
+/// and stays in cold storage, only fetched on a match — see
+/// [ADR-0001](../docs/adr/0001-multi-variant-search.md).
 #[derive(Debug)]
 pub struct VariantIndex {
     keys: Vec<[u8; 32]>,
     order: Vec<usize>,
     variants: &'static [OffsetVariant],
-    /// The full 512-entry target-specific X-coordinate array, kept for
-    /// round-tripping (e.g. JSON export).
-    x_bytes: Vec<[u8; 32]>,
 }
 
 impl VariantIndex {
@@ -256,7 +250,6 @@ impl VariantIndex {
             keys,
             order,
             variants,
-            x_bytes: x_bytes.to_vec(),
         }
     }
 
@@ -296,13 +289,6 @@ impl VariantIndex {
             small_scalar: j,
             candidates: [var.v_scalar.add(&j_scalar), var.v_scalar.sub(&j_scalar)],
         })
-    }
-
-    /// Returns the per-session target-specific X-coordinates parallel to
-    /// [`variants()`](Self::variants). Indexed by variant position in the
-    /// static slice (NOT in the sorted-by-key order).
-    pub fn x_bytes(&self) -> &[[u8; 32]] {
-        &self.x_bytes
     }
 
     /// Returns a slice of the backing variants.
