@@ -82,9 +82,9 @@ use tracing::instrument;
 /// let hex = "03203e7f72545397aa5719d2972c40eb44ecdebc784e6618c28d5796852edbaa57";
 /// let p = ecc::parse_pubkey(hex).unwrap();
 /// ```
-#[instrument(skip(hex_str), level = "debug")]
-pub fn parse_pubkey(hex_str: &str) -> Result<ProjectivePoint> {
-    let bytes = hex::decode(hex_str).map_err(FindError::from)?;
+#[instrument(skip(hex), level = "debug")]
+pub fn parse_pubkey(hex: &str) -> Result<ProjectivePoint> {
+    let bytes = hex::decode(hex).map_err(FindError::from)?;
     if bytes.is_empty() {
         return Err(FindError::InvalidPublicKey(
             "Empty hex string provided".to_string(),
@@ -140,8 +140,8 @@ pub const fn generator() -> ProjectivePoint {
 /// let s = ecc::hex_to_scalar("01").unwrap();
 /// assert_eq!(s, k256::Scalar::from(1u64));
 /// ```
-pub fn hex_to_scalar(hex_str: &str) -> Result<Scalar> {
-    let bytes = hex::decode(hex_str).map_err(FindError::from)?;
+pub fn hex_to_scalar(hex: &str) -> Result<Scalar> {
+    let bytes = hex::decode(hex).map_err(FindError::from)?;
     if bytes.is_empty() {
         return Err(FindError::EccError("Empty hex string input".to_string()));
     }
