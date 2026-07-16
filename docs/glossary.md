@@ -16,10 +16,7 @@ A scalar boundary (currently `32 × TRILLION = 3.2 × 10^13`) at which the orche
 A technique that amortizes modular inversion across multiple points using Montgomery's simultaneous inversion trick. The `k256` crate exposes this as [`ProjectivePoint::batch_normalize`]. With `BatchSize::DEFAULT = 32`, the per-point cost of affine extraction drops by ~15–20×. See [ADR-0002](adr/0002-batch-normalization.md) and [performance.md](performance.md#batch-normalization).
 
 ### `BatchSize`
-A `u32` newtype in [`src/config.rs`](../src/config.rs) (commit 7a) that wraps the hot-path batch-size knob. Construction is fallible: `BatchSize::new(u32) -> Result<BatchSize, FindError>`. The legal range is `BatchSize::MIN..=MAX = 1..=256`. `Config::batch_size: BatchSize` is now the runtime-controlling value (passed as `batch_size: u32` to `perform_chunked_sweep` and `precompute_chunk`); the legacy `BATCH_SIZE` constant is retained only as a default / documentation anchor.
-
-### `BATCH_SIZE`
-A public constant in [`src/search.rs`](../src/search.rs) (`pub const BATCH_SIZE: u64 = 32`). Retained for benchmark / documentation use only — the runtime-controlling value is [`Config::batch_size`](modules.md#orchestrator) of type [`BatchSize`](modules.md#config). The previous compile-time-bounded `[T; MAX_BATCH]` hot-path arrays are gone (commit 7b).
+A `u32` newtype in [`src/config.rs`](../src/config.rs) (commit 7a) that wraps the hot-path batch-size knob. Construction is fallible: `BatchSize::new(u32) -> Result<BatchSize, FindError>`. The legal range is `BatchSize::MIN..=MAX = 1..=256`. `Config::batch_size: BatchSize` is the runtime-controlling value (passed as `batch_size: u32` to `sweep_parallel` and `sweep_and_cache`); the runtime default is [`DEFAULT_BATCH_SIZE`](../src/config.rs).
 
 ### Binary cache
 A file containing a contiguous sequence of 32-byte big-endian X-coordinates of the form `j·G` for `j ∈ [start, end]`. The cache enables I/O-bound sweeps that bypass ECC arithmetic entirely. See [ADR-0006](adr/0006-binary-cache-format.md) and [operations.md](operations.md#binary-cache-management).
@@ -33,7 +30,7 @@ A [`FindError`](modules.md#error) variant raised when a binary cache file is not
 A trait defined in [`src/search.rs`](../src/search.rs) that abstracts over the persistence of X-coordinate blocks. The `search` module depends only on this trait, keeping it free of file-system details. See [ADR-0005](adr/0005-pure-search-module.md).
 
 ### `Config::validate_pubkey`
-A deep SEC1 validation entry point on [`Config`](modules.md#orchestrator) introduced in commit 3. `Config::validate()` is the shallow check (non-empty pubkey); `Config::validate_pubkey()` additionally runs the pubkey through [`ecc::parse_pubkey`](modules.md#ecc), raising `FindError::InvalidPublicKey` (or `FindError::HexError`) on any SEC1 failure. Both run at the top of `orchestrator::run`.
+A deep SEC1 validation entry point on [`Config`](modules.md#orchestrator) introduced in commit 3. `Config::validate_fields()` is the shallow check (non-empty pubkey); `Config::validate_pubkey()` additionally runs the pubkey through [`ecc::parse_pubkey`](modules.md#ecc), raising `FindError::InvalidPublicKey` (or `FindError::HexError`) on any SEC1 failure. Both run at the top of `orchestrator::run`.
 
 ### `CACHE_CHUNK_SIZE`
 A constant defined in [`src/orchestrator.rs`](../src/orchestrator.rs). Currently `1_000_000_000` (one billion). The orchestrator processes the scalar space in chunks of this size. Each chunk corresponds to ~32 GB of binary cache on disk.
@@ -69,7 +66,7 @@ Elliptic-curve cryptography. In this project, "ECC" always refers to operations 
 The unified error type returned by every fallible function in the `find` crate. See [modules.md#error](modules.md#error) and [ADR-0004](adr/0004-error-hierarchy.md).
 
 ### `find_map_any`
-A `rayon` parallel iterator method that searches across batches and returns the first `Some` result, terminating other workers early. Used by both `perform_chunked_sweep` and `precompute_chunk`.
+A `rayon` parallel iterator method that searches across batches and returns the first `Some` result, terminating other workers early. Used by both `sweep_parallel` and `sweep_and_cache`.
 
 ## G
 
@@ -107,7 +104,7 @@ The largest `j` that has been **fully swept** (i.e. the previous chunk's end). T
 ### `MAX_SEARCH`
 The upper bound of the sweep, declared in [`src/orchestrator.rs`](../src/orchestrator.rs) as `u64::MAX`. Effectively `2^64 - 1`.
 
-### `MIN_J`
+### `MIN_SEARCH_SCALAR`
 The minimum search scalar, declared in [`src/orchestrator.rs`](../src/orchestrator.rs) as `1`. The identity point is excluded.
 
 ### Montgomery simultaneous inversion
@@ -122,7 +119,7 @@ A struct in [`src/search.rs`](../src/search.rs) that carries a scalar offset `V`
 A [`std::sync::OnceLock`](https://doc.rust-lang.org/std/sync/struct.OnceLock.html) used in two places after the review-driven pass:
 
 1. `search::generate_variants` — interns the 512-variant metadata array once per process; the public API returns the `&'static` slice.
-2. `search::precompute_chunk` — replaces the previous `Mutex + AtomicBool` cross-batch match-coordination pair with a single lock-free `OnceLock<SearchMatch>` (commit 6; see [optimization-decisions/0007](../optimization-decisions/0007-oncelock-early-exit.md)).
+2. `search::sweep_and_cache` — replaces the previous `Mutex + AtomicBool` cross-batch match-coordination pair with a single lock-free `OnceLock<SearchMatch>` (commit 6; see [optimization-decisions/0007](../optimization-decisions/0007-oncelock-early-exit.md)).
 
 Because `OnceLock` has no mutex, there is no poisoning recovery path; panicking workers cannot corrupt the result.
 
@@ -157,10 +154,10 @@ A [`FindError`](modules.md#error) variant raised when a checkpoint's X-coordinat
 The *Standards for Efficient Cryptography* format for elliptic-curve key encoding. The tool accepts both compressed (33-byte) and uncompressed (65-byte) SEC1 hex inputs. See [references.md](references.md).
 
 ### `SearchMatch`
-A struct in [`src/search.rs`](../src/search.rs) describing a successful match: the variant label (`label`), the original unreduced offset decimal string (`offset`), the small scalar `j` (`small_scalar: u64`), and the two candidate private keys as `candidates: [k256::Scalar; 2]` (commit 12). The accessor `m.candidates_hex() -> [String; 2]` returns the trimmed-hex form; `m.candidates_as_scalars() -> [Scalar; 2]` returns the underlying scalars.
+A struct in [`src/search.rs`](../src/search.rs) describing a successful match: the variant label (`label`), the original unreduced offset decimal string (`offset`), the search scalar `j` (`j: u64`), and the two candidate private keys as `candidates: [k256::Scalar; 2]` (commit 12). The accessor `m.candidates_hex() -> [String; 2]` returns the trimmed-hex form; `m.candidates_as_scalars() -> [Scalar; 2]` returns the underlying scalars.
 
 ### Sweep
-The core operation: iterating `j` from `start` to `end` and checking each `j·G` against the variant index. May be CPU-bound (`perform_chunked_sweep`) or I/O-bound (`perform_cached_sweep`).
+The core operation: iterating `j` from `start` to `end` and checking each `j·G` against the variant index. May be CPU-bound (`sweep_parallel`) or I/O-bound (`sweep_cached`).
 
 ## T
 

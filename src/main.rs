@@ -116,7 +116,7 @@ fn main() -> anyhow::Result<()> {
 
     let start = Instant::now();
     match orchestrator::run(&config)? {
-        Some(m) => render_success_report(m, start.elapsed()),
+        Some(match_) => render_success_report(match_, start.elapsed()),
         None => println!("Search completed. No match found."),
     }
 
@@ -131,7 +131,7 @@ fn main() -> anyhow::Result<()> {
 ///
 /// This function performs no I/O beyond stdout and does not panic under
 /// normal [`find::search::SearchMatch`] input.
-fn render_success_report(m: find::search::SearchMatch, total_time: std::time::Duration) {
+fn render_success_report(match_: find::search::SearchMatch, total_time: std::time::Duration) {
     // Build the full banner in a single `String` (one allocation) and write
     // it once. The previous per-line `println!` did nine separate
     // `format!`-style allocations plus nine `STDOUT_LOCK` acquisitions.
@@ -141,11 +141,11 @@ fn render_success_report(m: find::search::SearchMatch, total_time: std::time::Du
     out.push_str(&separator);
     out.push('\n');
     use std::fmt::Write;
-    let _ = writeln!(out, "MATCH DISCOVERED (Variant: {})", m.label);
-    let _ = writeln!(out, "Shift scalar V: {}", m.offset);
-    let _ = writeln!(out, "Search scalar j: {}", m.j);
+    let _ = writeln!(out, "MATCH DISCOVERED (Variant: {})", match_.label);
+    let _ = writeln!(out, "Shift scalar V: {}", match_.offset);
+    let _ = writeln!(out, "Search scalar j: {}", match_.j);
     out.push_str("Target candidates (d = V +/- j):\n");
-    let candidates_hex = m.candidates_hex();
+    let candidates_hex = match_.candidates_hex();
     for (i, c) in candidates_hex.iter().enumerate() {
         let _ = writeln!(out, "  [{}] 0x{}", i + 1, c);
     }
@@ -207,13 +207,13 @@ mod tests {
     #[test]
     fn test_render_success_report() {
         use k256::Scalar;
-        let m = find::search::SearchMatch::new(
+        let match_ = find::search::SearchMatch::new(
             "2^10",
             "1024",
             42,
             [Scalar::from(1066u64), Scalar::from(982u64)],
         );
         // The function writes to stdout; we just verify it doesn't panic.
-        render_success_report(m, std::time::Duration::from_secs(5));
+        render_success_report(match_, std::time::Duration::from_secs(5));
     }
 }

@@ -30,8 +30,8 @@ points drops the per-point cost ~46% (32 → 128) and ~54% (32 → 256).
 ## Decision
 
 Introduce a new constant `NORMALIZE_GROUP_BATCHES = 4` and
-restructure the inner loop of `perform_chunked_sweep` and
-`precompute_chunk` so that **4 consecutive batches share a single
+restructure the inner loop of `sweep_parallel` and
+`sweep_and_cache` so that **4 consecutive batches share a single
 `batch_normalize` call** on 128 points (4 × 32).
 
 Per group:
@@ -65,7 +65,7 @@ arithmetic). Only the `batch_normalize` boundary is widened.
 - **Random scalar < 2³² stress test (d ≈ 1.9 B, j ≈ 271 M):
   15.5 s → 10.6 s (−32 %).**
 - All 112 existing tests pass; no API changes.
-- The two code paths (`perform_chunked_sweep`, `precompute_chunk`)
+- The two code paths (`sweep_parallel`, `sweep_and_cache`)
   remain structurally symmetric — same group size, same early-exit
   semantics.
 

@@ -7,7 +7,7 @@
 
 ## Context
 
-The orchestrator can be configured to write a **binary cache** of X-coordinates as a side-effect of the search. On a subsequent run, the cache is consumed by [`perform_cached_sweep`](../../src/persistence.rs), which reads 32-byte blocks and matches them against the variant index without re-running scalar multiplications.
+The orchestrator can be configured to write a **binary cache** of X-coordinates as a side-effect of the search. On a subsequent run, the cache is consumed by [`sweep_cached`](../../src/persistence.rs), which reads 32-byte blocks and matches them against the variant index without re-running scalar multiplications.
 
 The cache file format must:
 
@@ -36,7 +36,7 @@ Properties:
 - **Endianness:** all multi-byte integers are big-endian, matching the SEC1 X-coordinate encoding. This is portable across architectures.
 - **Concurrent writes:** workers call `writer.write_block(offset, data)` with non-overlapping `offset` ranges. On Unix, `pwrite_at` is atomic; on other platforms, a `Mutex<File>` serializes writes. The per-batch size is small (~1 KB) so mutex contention is negligible.
 
-**Corruption detection:** [`perform_cached_sweep`](../../src/persistence.rs) verifies that the file size is a multiple of 32 bytes before reading. A file that fails the check returns [`CacheCorrupted`](../../src/error.rs) and the run aborts.
+**Corruption detection:** [`sweep_cached`](../../src/persistence.rs) verifies that the file size is a multiple of 32 bytes before reading. A file that fails the check returns [`CacheCorrupted`](../../src/error.rs) and the run aborts.
 
 **File naming:** caches are stored under `<output_dir>/checkpoints/chunk_<start_j>.bin` so that the start scalar is recoverable from the filename. There is no need to read a header to know which range a cache file covers.
 
@@ -91,7 +91,7 @@ A fixed-size header at the start of the file containing `start_j`, `end_j`, `ver
 
 ## References
 
-- Source: [`src/persistence.rs::FileCacheWriter`](../../src/persistence.rs), [`src/persistence.rs::perform_cached_sweep`](../../src/persistence.rs)
+- Source: [`src/persistence.rs::BinaryCacheWriter`](../../src/persistence.rs), [`src/persistence.rs::sweep_cached`](../../src/persistence.rs)
 - Architecture: [architecture.md#persistence-layer](../architecture.md#persistence-layer)
 - Tests: [`src/persistence.rs::test_cached_sweep_corrupted_size`](../../src/persistence.rs), [`src/persistence.rs::test_cached_sweep_write_and_read_back`](../../src/persistence.rs)
 - SEC1 X-coordinate encoding: <https://www.secg.org/sec1-v2.pdf>

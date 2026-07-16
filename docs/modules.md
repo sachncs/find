@@ -13,10 +13,10 @@ find/
 ├── error.rs         # FindError (8 variants) + Result alias
 ├── ecc.rs           # SEC1 parsing, point arithmetic, hex conversion, to_hex_x
 ├── search.rs        # Pure domain: VariantIndex, OffsetVariant, generate_variants,
-│                   #   compute_variant_x_bytes, perform_chunked_sweep, precompute_chunk,
+│                   #   compute_variant_x_bytes, sweep_parallel, sweep_and_cache,
 │                   #   CacheWriter trait, Progress
-├── persistence.rs   # Checkpoint save/load, FileCacheWriter, perform_cached_sweep,
-│                   #   save_variants_to_json (the only libc::fsync unsafe lives here)
+├── persistence.rs   # Checkpoint save/load, BinaryCacheWriter, sweep_cached,
+│                   #   write_variants_json (the only libc::fsync unsafe lives here)
 └── orchestrator.rs  # run(&Config) entry point + checkpoint/lifecycle loop
 ```
 
@@ -149,13 +149,13 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 |---|---|
 | `generate_variants(&ProjectivePoint) -> &'static [OffsetVariant]` | Returns a `'static` slice of the 512-variant metadata (label / scalar / decimal-offset) from a process-wide `OnceLock` (commit 7c) |
 | `compute_variant_x_bytes(&ProjectivePoint) -> Vec<[u8; 32]>` | Computes the target-specific X-coordinates (per-session arithmetic); pairs with `generate_variants` to build a `VariantIndex` |
-| `perform_chunked_sweep(&VariantIndex, start, end, batch_size) -> Option<SearchMatch>` | CPU-bound parallel sweep; honours `batch_size` from `Config::batch_size` (commit 7b) |
-| `precompute_chunk(start, end, &W, Option<&VariantIndex>, &Progress, batch_size) -> Result<Option<SearchMatch>>` | Pre-computes a binary cache chunk while optionally searching for a match |
+| `sweep_parallel(&VariantIndex, start, end, batch_size) -> Option<SearchMatch>` | CPU-bound parallel sweep; honours `batch_size` from `Config::batch_size` (commit 7b) |
+| `sweep_and_cache(start, end, &W, Option<&VariantIndex>, &Progress, batch_size) -> Result<Option<SearchMatch>>` | Pre-computes a binary cache chunk while optionally searching for a match |
 
 **Performance notes:**
 
-- `perform_chunked_sweep` uses `rayon::find_map_any` for early-exit on the first match.
-- `precompute_chunk` uses a `OnceLock<SearchMatch>` for cross-batch coordination; worker panics cannot corrupt the result because there is no lock.
+- `sweep_parallel` uses `rayon::find_map_any` for early-exit on the first match.
+- `sweep_and_cache` uses a `OnceLock<SearchMatch>` for cross-batch coordination; worker panics cannot corrupt the result because there is no lock.
 - The hot-path arrays are heap-allocated (`Vec<ProjectivePoint>`, `Vec<AffinePoint>`, `Vec<u8>`) and sized at runtime against `Config::batch_size`.
 - `generate_variants` returns `&'static [OffsetVariant]` interned via `OnceLock<Box<[OffsetVariant; 512]>>`; the per-session X-coordinates come from `compute_variant_x_bytes`.
 
@@ -172,7 +172,7 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 | Item | Description |
 |---|---|
 | `Checkpoint` | Durable checkpoint: `last_j`, `pubkey`, `last_x` (integrity anchor) |
-| `FileCacheWriter` | Cross-platform writer for binary cache files (implements `CacheWriter`) |
+| `BinaryCacheWriter` | Cross-platform writer for binary cache files (implements `CacheWriter`) |
 
 ### Functions
 
@@ -181,12 +181,12 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 | `Checkpoint::load(&Path) -> Result<Self>` | Loads a checkpoint from a JSON file |
 | `Checkpoint::verify(&str) -> Result<()>` | Verifies the integrity anchor against the recalculated X-coordinate |
 | `Checkpoint::save_atomic(&Path) -> Result<()>` | Persists the checkpoint via write-then-rename with parent-dir fsync on Unix |
-| `FileCacheWriter::create(&Path) -> Result<Self>` | Creates a new cache file (and parent directories) |
-| `FileCacheWriter::preallocate(u64) -> Result<()>` | Pre-allocates the file to the given length |
-| `perform_cached_sweep(&VariantIndex, &Path, start_j) -> Result<Option<SearchMatch>>` | I/O-bound search against a pre-computed cache |
-| `save_variants_to_json(&[OffsetVariant], &str) -> Result<String>` | Exports variant metadata to `points.json` |
+| `BinaryCacheWriter::create(&Path) -> Result<Self>` | Creates a new cache file (and parent directories) |
+| `BinaryCacheWriter::preallocate(u64) -> Result<()>` | Pre-allocates the file to the given length |
+| `sweep_cached(&VariantIndex, &Path, start_j) -> Result<Option<SearchMatch>>` | I/O-bound search against a pre-computed cache |
+| `write_variants_json(&[OffsetVariant], &str) -> Result<String>` | Exports variant metadata to `points.json` |
 
-**Cross-platform note:** `FileCacheWriter::write_block` uses `pwrite_at` on Unix (atomic at any offset) and falls back to a `Mutex<File>`-protected `seek + write_all` on other platforms. Mutex contention is negligible because each write is a single ~1 KB batch.
+**Cross-platform note:** `BinaryCacheWriter::write_block` uses `pwrite_at` on Unix (atomic at any offset) and falls back to a `Mutex<File>`-protected `seek + write_all` on other platforms. Mutex contention is negligible because each write is a single ~1 KB batch.
 
 ## `orchestrator` — high-level session management
 
@@ -199,7 +199,7 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 | Item | Description |
 |---|---|
 | `Config` | Configuration required to drive a search session (pubkey, output dir, cache flag, `BatchSize`, `variant_count`) |
-| `Config::validate() -> Result<()>` | Shallow validation: pubkey non-empty / not whitespace-only |
+| `Config::validate_fields() -> Result<()>` | Shallow validation: pubkey non-empty / not whitespace-only |
 | `Config::validate_pubkey() -> Result<()>` | Deep validation: pubkey parses as a SEC1 point via `ecc::parse_pubkey` (commit 3) |
 | `Config::try_with_batch_size(u32) -> Result<Self, FindError>` | Fallible batch-size setter; raises `InvalidConfig` on out-of-range (commit 7a) |
 | `Config::try_with_variant_count(u32) -> Result<Self, FindError>` | Fallible variant-count setter; raises `InvalidConfig` on out-of-range (commit 7a) |
@@ -213,11 +213,11 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 | `TRILLION` | `1_000_000_000_000` | Human-readable step size for audit boundary logging |
 | `CACHE_CHUNK_SIZE` | `1_000_000_000` | Number of scalars per cache chunk (~32 GB of cache per chunk) |
 | `MAX_SEARCH` | `u64::MAX` | Theoretical upper bound of the search range |
-| `MIN_J` | `1` | Minimum non-zero search scalar (the identity point is excluded) |
+| `MIN_SEARCH_SCALAR` | `1` | Minimum non-zero search scalar (the identity point is excluded) |
 
 **Lifecycle (per `run` invocation):**
 
-1. Validate the configuration (`Config::validate` shallow + `Config::validate_pubkey` deep).
+1. Validate the configuration (`Config::validate_fields` shallow + `Config::validate_pubkey` deep).
 2. Parse the target public key through `ecc::parse_pubkey`.
 3. Get the static 512-variant metadata via `generate_variants` (interned `OnceLock`) and the target-specific X-coordinates via `compute_variant_x_bytes`. Persist both to `points.json`.
 4. Build the `VariantIndex` from the static metadata + per-session X-coords.
@@ -248,16 +248,15 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 
 The `search` module exposes a small number of `pub(crate)` helpers (`affine_x_bytes`,
 `scalar_to_hex_trimmed`, `u256_to_decimal`) that are used by tests but not by library
-consumers. The `BATCH_SIZE` constant (`32`) is a `pub` const retained for
-benchmark / documentation use; the **runtime-controlling** value is
+consumers. The duplicate `pub const search::BATCH_SIZE: u64 = 32` was removed
+during the rename pass; the **runtime-controlling** value is
 `Config::batch_size` of type `BatchSize` (commit 7a). The hot-path arrays
 (`Vec<ProjectivePoint>`, `Vec<AffinePoint>`, `Vec<u8>`) are heap-allocated
 and sized against `batch_size` at runtime (commit 7b; see
 [ADR-0009](adr/0009-runtime-batch-size.md)).
 
-`pub const MAX_BATCH: usize = 32` (and its companion compile-time
-constant `BATCH_SIZE`) was removed in commit 7b; the compile-time
-batched-array ceiling is gone.
+`pub const MAX_BATCH: usize = 32` was removed in commit 7b; the
+compile-time batched-array ceiling is gone.
 
 ## Extension points
 
@@ -265,9 +264,9 @@ The crate is designed for downstream extension along the following axes:
 
 | Extension | Mechanism |
 |---|---|
-| Custom cache storage | Implement `search::CacheWriter` and pass it to `precompute_chunk` |
+| Custom cache storage | Implement `search::CacheWriter` and pass it to `sweep_and_cache` |
 | Custom progress reporting | Pass a custom `search::Progress` (or any type with the same `add`/`get` shape) |
 | Custom variant generation | Construct `search::OffsetVariant` instances directly and build a `VariantIndex` |
-| Custom session control | Call `search::perform_chunked_sweep` directly; bypass the orchestrator entirely |
+| Custom session control | Call `search::sweep_parallel` directly; bypass the orchestrator entirely |
 
 The `CacheWriter` trait is **object-safe** (`Send + Sync` supertraits, no generics), enabling dynamic dispatch and runtime writer selection.

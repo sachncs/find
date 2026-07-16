@@ -1,4 +1,4 @@
-# 0008 — Super-batch bootstrap chaining in `perform_chunked_sweep` / `precompute_chunk`
+# 0008 — Super-batch bootstrap chaining in `sweep_parallel` / `sweep_and_cache`
 
 - **Status:** Accepted
 - **Date:** 2026-07-16
@@ -7,8 +7,8 @@
 
 ## Context
 
-Before this change, each Rayon task in `perform_chunked_sweep` and
-`precompute_chunk` processed exactly one batch of `Config::batch_size`
+Before this change, each Rayon task in `sweep_parallel` and
+`sweep_and_cache` processed exactly one batch of `Config::batch_size`
 scalars (default 32). The per-batch cost was:
 
 1. **Bootstrap:** one full `ProjectivePoint::GENERATOR * Scalar::from(chunk_start)`
@@ -39,7 +39,7 @@ one super-batch sequentially:
 
 The hot-path buffers (`[ProjectivePoint; MAX_BATCH_SIZE]`,
 `[AffinePoint; MAX_BATCH_SIZE]`, and `[u8; MAX_BATCH_SIZE * 32]` in
-`precompute_chunk`) are now stack-allocated at module-level
+`sweep_and_cache`) are now stack-allocated at module-level
 `MAX_BATCH = 256`, eliminating per-batch `Vec` heap allocations
 (~31.25 M / 1 B-scalar sweep).
 
@@ -68,7 +68,7 @@ additions + 1 batch-normalize + 32 lookups).
   entirely; the chain becomes the new bottleneck.
 - Heap allocation count drops by ~31.25 M per 1 B-scalar sweep
   (two `Vec`s per batch × batches + the `block` `Vec` in
-  `precompute_chunk`).
+  `sweep_and_cache`).
 - The `_ = block_len` / `Vec` re-allocation in the inner loop is gone;
   the stack array is reused across batches and super-batches.
 
@@ -80,7 +80,7 @@ additions + 1 batch-normalize + 32 lookups).
   in that task to be skipped (still correct). Other super-batches are
   cancelled via the existing `OnceLock::get()` fast-path check at the
   top of each task.
-- The previous test `prop_precompute_chunk_roundtrip` asserted
+- The previous test `prop_sweep_and_cache_roundtrip` asserted
   `cache_bytes.len() >= 32` after a match was found. That assertion
   relied on a race between parallel batches writing cache blocks
   before noticing the early-exit. With sequential per-super-batch

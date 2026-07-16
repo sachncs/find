@@ -179,9 +179,9 @@ The tool uses `rayon`'s work-stealing parallelism:
 - Range is divided into batches of `Config::batch_size` scalars (default 32; range 1..=256; commit 7b).
 - Each worker processes one batch independently.
 - `find_map_any()` provides early exit on first match.
-- No locks in the hot path: the `VariantIndex` is read-only after construction; `precompute_chunk`'s cross-batch coordination is a single `OnceLock<SearchMatch>` (commit 6).
+- No locks in the hot path: the `VariantIndex` is read-only after construction; `sweep_and_cache`'s cross-batch coordination is a single `OnceLock<SearchMatch>` (commit 6).
 
-A custom Rayon `panic_handler` logs worker panics rather than aborting the process. The search hot path uses `OnceLock` for cross-batch coordination, which has no mutex to be poisoned; the only `Mutex` left in the application is `FileCacheWriter`'s non-Unix fallback in `src/persistence.rs`. See [observability.md#rayon-panic-handling](observability.md#rayon-panic-handling) and [optimization-decisions/0007-oncelock-early-exit.md](optimization-decisions/0007-oncelock-early-exit.md).
+A custom Rayon `panic_handler` logs worker panics rather than aborting the process. The search hot path uses `OnceLock` for cross-batch coordination, which has no mutex to be poisoned; the only `Mutex` left in the application is `BinaryCacheWriter`'s non-Unix fallback in `src/persistence.rs`. See [observability.md#rayon-panic-handling](observability.md#rayon-panic-handling) and [optimization-decisions/0007-oncelock-early-exit.md](optimization-decisions/0007-oncelock-early-exit.md).
 
 ## Performance
 
@@ -279,8 +279,8 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
 
 The tool is designed with security in mind:
 
-- One reviewed `unsafe` call (`libc::fsync` in `src/persistence.rs`); no other application-code `unsafe`. The review-driven pass (commits 1, 6) removed the two unsafes that existed at 0.1.6: `String::from_utf8_unchecked` in `u256_to_decimal`, and the `Mutex + AtomicBool` cross-batch coordination in `precompute_chunk` (now `OnceLock<SearchMatch>`).
-- Input validation on all operations: `Config::validate` (shallow) + `Config::validate_pubkey` (deep SEC1 parse) at the top of `orchestrator::run`; fallible `try_with_batch_size` / `try_with_variant_count` in `main`.
+- One reviewed `unsafe` call (`libc::fsync` in `src/persistence.rs`); no other application-code `unsafe`. The review-driven pass (commits 1, 6) removed the two unsafes that existed at 0.1.6: `String::from_utf8_unchecked` in `u256_to_decimal`, and the `Mutex + AtomicBool` cross-batch coordination in `sweep_and_cache` (now `OnceLock<SearchMatch>`).
+- Input validation on all operations: `Config::validate_fields` (shallow) + `Config::validate_pubkey` (deep SEC1 parse) at the top of `orchestrator::run`; fallible `try_with_batch_size` / `try_with_variant_count` in `main`.
 - Checkpoint integrity verification
 - Atomic file operations (write-then-rename + parent-dir `fsync` on Unix)
 - Required-for-merge `cargo miri` job in CI (commit 9)

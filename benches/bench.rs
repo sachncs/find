@@ -138,7 +138,7 @@ fn bench_end_to_end_small_scalar(c: &mut Criterion) {
 
     c.bench_function("end_to_end_small_scalar_12345", |b| {
         b.iter(|| {
-            // The orchestrator clamps start to MIN_J = 1 internally; we
+            // The orchestrator clamps start to MIN_SEARCH_SCALAR = 1 internally; we
             // do the same here.
             let m = std::hint::black_box(search::sweep_parallel(&index, 1, 10_000_000, 32));
             assert!(m.is_some(), "match must be found");
@@ -171,9 +171,7 @@ fn bench_random_scalar_sweep(c: &mut Criterion) {
 
     c.bench_function("random_scalar_sweep_lt_2_32", |b| {
         b.iter(|| {
-            let m = std::hint::black_box(
-                search::sweep_parallel(&index, 1, 1u64 << 14, 32),
-            );
+            let m = std::hint::black_box(search::sweep_parallel(&index, 1, 1u64 << 14, 32));
             assert!(m.is_some(), "match must be found for d={d}");
         });
     });

@@ -91,7 +91,7 @@ Notable properties:
 | Item | Purpose |
 |---|---|
 | `Config` | Owned-string configuration: pubkey, output dir, cache flag, `BatchSize`, `variant_count` |
-| `Config::validate() -> Result<()>` | Shallow check: pubkey non-empty / not whitespace-only |
+| `Config::validate_fields() -> Result<()>` | Shallow check: pubkey non-empty / not whitespace-only |
 | `Config::validate_pubkey() -> Result<()>` | Deep check: rounds the pubkey through `ecc::parse_pubkey`, raising `InvalidPublicKey` on any SEC1 failure (commit 3) |
 | `Config::try_with_batch_size(u32) -> Result<Self, FindError>` | Fallible batch-size setter; returns `InvalidConfig` on out-of-range (commit 7a) |
 | `Config::try_with_variant_count(u32) -> Result<Self, FindError>` | Fallible variant-count setter (commit 7a) |
@@ -105,7 +105,7 @@ Notable properties:
 | `TRILLION` | `1_000_000_000_000` | Human-readable step size for audit-boundary logging |
 | `DEFAULT_CACHE_CHUNK_SIZE` | `1_000_000_000` | Number of scalars per cache chunk (~32 GB of cache on disk) |
 | `MAX_SEARCH` | `u64::MAX` | Theoretical upper bound of the search range |
-| `MIN_J` | `1` | Minimum non-zero search scalar (the identity point is excluded) |
+| `MIN_SEARCH_SCALAR` | `1` | Minimum non-zero search scalar (the identity point is excluded) |
 
 **Lifecycle of a `run` invocation (post-review):**
 
@@ -118,11 +118,11 @@ sequenceDiagram
     participant FS as File System
 
     U->>O: run(&Config)
-    O->>O: Config::validate() (shallow)
+    O->>O: Config::validate_fields() (shallow)
     O->>O: Config::validate_pubkey() (deep, ecc::parse_pubkey)
     O->>S: generate_variants(&target_p) -> &'static [OffsetVariant; 512]
     O->>S: compute_variant_x_bytes(&target_p) -> Vec<[u8; 32]>
-    O->>P: save_variants_to_json(metas, &x_bytes, dir)
+    O->>P: write_variants_json(metas, &x_bytes, dir)
     P->>FS: write data/points.json
     O->>P: Checkpoint::load
     alt checkpoint valid + pubkey match
@@ -134,13 +134,13 @@ sequenceDiagram
     loop per chunk
         O->>FS: check chunk_<start_j>.bin
         alt cache hit
-            O->>P: perform_cached_sweep
+            O->>P: sweep_cached
         else cache miss + --cache-points
-            O->>S: precompute_chunk(.., batch_size)
+            O->>S: sweep_and_cache(.., batch_size)
             S->>P: CacheWriter::write_block
-            O->>P: perform_cached_sweep
+            O->>P: sweep_cached
         else cache miss + no --cache-points
-            O->>S: perform_chunked_sweep(.., batch_size)
+            O->>S: sweep_parallel(.., batch_size)
         end
         alt match found
             S-->>O: Some(SearchMatch { candidates: [Scalar; 2], .. })
@@ -155,7 +155,7 @@ sequenceDiagram
 
 **Key behaviors:**
 
-- The orchestrator never directly computes ECC. All cryptographic work is delegated to `search::perform_chunked_sweep` or `precompute_chunk`, both of which take `batch_size: u32` from `Config::batch_size`.
+- The orchestrator never directly computes ECC. All cryptographic work is delegated to `search::sweep_parallel` or `sweep_and_cache`, both of which take `batch_size: u32` from `Config::batch_size`.
 - The checkpoint is written **only** when a chunk completes without a match. If a match is found, the checkpoint write is skipped.
 - The chunk loop uses `saturating_add` for `current_j + CACHE_CHUNK_SIZE`; if saturation is detected, the loop exits with "Search space exhausted (overflow detected)".
 - `generate_variants` returns a `&'static [OffsetVariant]` slice backed by a process-wide `OnceLock`. The first call pays the 512-entry construction cost; subsequent calls in the same process (different target pubs) are free.
@@ -188,8 +188,8 @@ sequenceDiagram
 |---|---|
 | `generate_variants(&ProjectivePoint) -> &'static [OffsetVariant]` | Returns the interned 512-variant metadata (label / scalar / decimal-offset) taken from a per-process `OnceLock<Box<[OffsetVariant; 512]>>` (commit 7c). Calls are essentially free on the happy path. |
 | `compute_variant_x_bytes(&ProjectivePoint) -> Vec<[u8; 32]>` | Computes the target-specific X-coordinates (256+256 scalar multiplications or mixed additions). Pair with `generate_variants` to build a `VariantIndex`. |
-| `perform_chunked_sweep(&VariantIndex, start, end, batch_size) -> Option<SearchMatch>` | CPU-bound parallel sweep; honours `batch_size` from `Config::batch_size` (commit 7b) |
-| `precompute_chunk(start, end, &W, Option<&VariantIndex>, &Progress, batch_size) -> Result<Option<SearchMatch>>` | Pre-computes a binary cache chunk while optionally searching for a match; takes the same `batch_size` arg |
+| `sweep_parallel(&VariantIndex, start, end, batch_size) -> Option<SearchMatch>` | CPU-bound parallel sweep; honours `batch_size` from `Config::batch_size` (commit 7b) |
+| `sweep_and_cache(start, end, &W, Option<&VariantIndex>, &Progress, batch_size) -> Result<Option<SearchMatch>>` | Pre-computes a binary cache chunk while optionally searching for a match; takes the same `batch_size` arg |
 
 **Performance characteristics:**
 
@@ -200,9 +200,9 @@ sequenceDiagram
 - The `VariantIndex` reference is shared immutably across all workers; no locks are required because the index is read-only after construction.
 - `generate_variants` is essentially free on the happy path: the 512-entry metadata is built once per process in a `OnceLock`. Only the per-session `compute_variant_x_bytes` arithmetic is paid.
 
-**`precompute_chunk` cross-batch coordination:**
+**`sweep_and_cache` cross-batch coordination:**
 
-`precompute_chunk` uses a `OnceLock<SearchMatch>` shared across batches (replacing the previous `Mutex<Option<SearchMatch>>` + `AtomicBool` pair — see [optimization-decisions/0007](../optimization-decisions/0007-oncelock-early-exit.md)). Each batch:
+`sweep_and_cache` uses a `OnceLock<SearchMatch>` shared across batches (replacing the previous `Mutex<Option<SearchMatch>>` + `AtomicBool` pair — see [optimization-decisions/0007](../optimization-decisions/0007-oncelock-early-exit.md)). Each batch:
 
 1. Reads the `OnceLock` (lock-free) to check whether another batch has already published a match.
 2. If yes, returns immediately (no work done).
@@ -224,11 +224,11 @@ Because `OnceLock` has no mutex, no poisoning recovery is needed — there is no
 | `Checkpoint::load(&Path) -> Result<Self>` | Read a checkpoint from a JSON file |
 | `Checkpoint::verify(&str) -> Result<()>` | Verify the integrity anchor against the recalculated X-coordinate |
 | `Checkpoint::save_atomic(&Path) -> Result<()>` | Write the checkpoint via write-then-rename with parent-dir `fsync` on Unix |
-| `FileCacheWriter` | Cross-platform binary cache writer (implements `CacheWriter`) |
-| `FileCacheWriter::create(&Path) -> Result<Self>` | Create a new cache file (and parent directories) |
-| `FileCacheWriter::preallocate(u64) -> Result<()>` | Pre-allocate the file to the given length |
-| `perform_cached_sweep(&VariantIndex, &Path, start_j) -> Result<Option<SearchMatch>>` | I/O-bound search against a pre-computed cache |
-| `save_variants_to_json(variants: &[OffsetVariant], x_bytes: &[[u8; 32]], dir_path: &str) -> Result<String>` | Export variant metadata to `points.json` (commit 7c added the `x_bytes` parameter) |
+| `BinaryCacheWriter` | Cross-platform binary cache writer (implements `CacheWriter`) |
+| `BinaryCacheWriter::create(&Path) -> Result<Self>` | Create a new cache file (and parent directories) |
+| `BinaryCacheWriter::preallocate(u64) -> Result<()>` | Pre-allocate the file to the given length |
+| `sweep_cached(&VariantIndex, &Path, start_j) -> Result<Option<SearchMatch>>` | I/O-bound search against a pre-computed cache |
+| `write_variants_json(variants: &[OffsetVariant], x_bytes: &[[u8; 32]], dir_path: &str) -> Result<String>` | Export variant metadata to `points.json` (commit 7c added the `x_bytes` parameter) |
 
 **Atomic persistence pattern (`save_atomic`):**
 
@@ -246,7 +246,7 @@ graph TD
 
 The rename is atomic on POSIX-compliant file systems (ext4, XFS, APFS, NTFS). The parent-directory `fsync` on Unix closes a subtle durability gap: most file systems require the directory entry to be flushed for the rename to survive a crash.
 
-**Cross-platform `FileCacheWriter::write_block`:**
+**Cross-platform `BinaryCacheWriter::write_block`:**
 
 | Platform | Mechanism | Notes |
 |---|---|---|
@@ -267,7 +267,7 @@ The rename is atomic on POSIX-compliant file systems (ext4, XFS, APFS, NTFS). Th
 - Big-endian X-coordinate encoding matches SEC1.
 - File size must be a multiple of 32 bytes; otherwise `CacheCorrupted` is raised.
 
-**`perform_cached_sweep` buffer:** the per-batch inner loop reads 32 bytes at a time using a `CACHED_SWEEP_BUF_SIZE`-byte stack scratch buffer (default 32 KiB) rather than allocating per-batch `Vec<u8>`s. Each batch of 32 bytes is copied out via `copy_from_slice` (commit 13).
+**`sweep_cached` buffer:** the per-batch inner loop reads 32 bytes at a time using a `CACHED_SWEEP_BUF_SIZE`-byte stack scratch buffer (default 32 KiB) rather than allocating per-batch `Vec<u8>`s. Each batch of 32 bytes is copied out via `copy_from_slice` (commit 13).
 
 ### 5. ECC layer (`ecc.rs`)
 
@@ -314,7 +314,7 @@ graph LR
     B2[search::compute_variant_x_bytes<br/>returns Vec<[u8; 32]>] --> D
     C --> D[VariantIndex::new(variants, &x_bytes)<br/>sort by X]
     D --> E[Search loop per chunk]
-    E --> F[perform_chunked_sweep(.., batch_size)]
+    E --> F[sweep_parallel(.., batch_size)]
     F --> G[Vec with capacity batch_size<br/>scalar mul G + chain]
     G --> H[batch_normalize<br/>1 inversion + (batch_size - 1) muls]
     H --> I[VariantIndex::match_x<br/>O log 512 binary search]
@@ -330,7 +330,7 @@ graph LR
 ```mermaid
 graph LR
     A[Chunk start: current_j] --> B{Cache file exists?}
-    B -->|Yes| C[perform_cached_sweep]
+    B -->|Yes| C[sweep_cached]
     C --> D[read 32 bytes]
     D --> E[VariantIndex::match_x]
     E --> F{Match?}
@@ -338,11 +338,11 @@ graph LR
     F -->|No| H{More data?}
     H -->|Yes| D
     H -->|No| I[Return None]
-    B -->|No + --cache-points| J[precompute_chunk]
+    B -->|No + --cache-points| J[sweep_and_cache]
     J --> K[Batch: scalar mul G + normalize]
     K --> L[Match? + Write to cache]
-    L --> M[perform_cached_sweep on new file]
-    B -->|No + no cache| N[perform_chunked_sweep]
+    L --> M[sweep_cached on new file]
+    B -->|No + no cache| N[sweep_parallel]
 ```
 
 ### Checkpoint flow
@@ -415,16 +415,16 @@ graph TD
 | Primitive | Location | Purpose |
 |---|---|---|
 | `AtomicU64` (Relaxed) | `search::Progress` | Telemetry counter; relaxed ordering is sufficient because the value is informational |
-| `OnceLock<SearchMatch>` | `search::precompute_chunk` | Cross-batch one-shot match publication (replaces the `Mutex<Option<SearchMatch>>` + `AtomicBool` pair from 0.1.6; commit 6 + see [optimization-decisions/0007](../optimization-decisions/0007-oncelock-early-exit.md)) |
+| `OnceLock<SearchMatch>` | `search::sweep_and_cache` | Cross-batch one-shot match publication (replaces the `Mutex<Option<SearchMatch>>` + `AtomicBool` pair from 0.1.6; commit 6 + see [optimization-decisions/0007](../optimization-decisions/0007-oncelock-early-exit.md)) |
 | `OnceLock<Box<[OffsetVariant; 512]>>` | `search::generate_variants` | Per-process interning of the 512-entry variant metadata (replaces 512 `format!` + 256+256 `u256_to_decimal` allocations per session; commit 7c) |
-| `Mutex<File>` | `persistence::FileCacheWriter` (non-Unix only) | Serializes `seek + write_all` on platforms without `pwrite_at`. **The only remaining `Mutex` in the codebase** after commit 6. |
+| `Mutex<File>` | `persistence::BinaryCacheWriter` (non-Unix only) | Serializes `seek + write_all` on platforms without `pwrite_at`. **The only remaining `Mutex` in the codebase** after commit 6. |
 | `tracing` non-blocking writer | `main::init_tracing` | Decouples log I/O from the CPU path |
 
 ### Early-exit semantics
 
 `rayon::find_map_any` provides a clean early-exit: when any worker returns `Some(_)`, the remaining workers' batches are abandoned and the result is returned. The behavior is documented in the [`rayon` documentation](https://docs.rs/rayon).
 
-The custom panic handler in `main.rs` allows a worker panic to be recovered: the panic is logged, and the search continues with the remaining workers. The search hot path uses `OnceLock<SearchMatch>` for cross-batch coordination, which has **no mutex** to poison; the only `Mutex` left in the application (the non-Unix `FileCacheWriter` fallback) is in `src/persistence.rs`.
+The custom panic handler in `main.rs` allows a worker panic to be recovered: the panic is logged, and the search continues with the remaining workers. The search hot path uses `OnceLock<SearchMatch>` for cross-batch coordination, which has **no mutex** to poison; the only `Mutex` left in the application (the non-Unix `BinaryCacheWriter` fallback) is in `src/persistence.rs`.
 
 ## Persistence architecture
 
@@ -470,10 +470,10 @@ See [security.md](security.md) for the full security model. The architecture-lev
 
 - **One reviewed `unsafe` call** in application code (`libc::fsync` in `persistence.rs`); no other application-code `unsafe`. This was the case at 0.1.6 and remains true after the review-driven pass:
   - commit 1 removed the `unsafe { String::from_utf8_unchecked }` block in `u256_to_decimal` (commit 1);
-  - commit 6 migrated `precompute_chunk` off `Mutex<Option<SearchMatch>>` + `AtomicBool` to a single `OnceLock<SearchMatch>`, eliminating the need for poison handling;
+  - commit 6 migrated `sweep_and_cache` off `Mutex<Option<SearchMatch>>` + `AtomicBool` to a single `OnceLock<SearchMatch>`, eliminating the need for poison handling;
   - commit 10 added a curated `[lints.clippy]` (pedantic + nursery) gate with a documented allow-list, encouraging future contributors to reach for safe alternatives.
 - **Atomic state persistence** via write-then-rename and parent-directory `fsync` (with a tightened three-clause `// SAFETY:` block per commit 2).
-- **Input validation** at the boundary: `Config::validate` (shallow) + `Config::validate_pubkey` (deep, delegates to `ecc::parse_pubkey`). `Config::try_with_*` builders reject out-of-range `--batch-size` / `--variants` as `FindError::InvalidConfig`.
+- **Input validation** at the boundary: `Config::validate_fields` (shallow) + `Config::validate_pubkey` (deep, delegates to `ecc::parse_pubkey`). `Config::try_with_*` builders reject out-of-range `--batch-size` / `--variants` as `FindError::InvalidConfig`.
 - **No network I/O** — the tool does not require or use the network.
 - **Dependency auditing** via `cargo audit` and `cargo deny` in CI.
 - **Miri for unsafe changes** — `cargo +nightly miri test --workspace --all-features` runs on every PR (CI) and is required for any PR that modifies `unsafe`.
@@ -482,10 +482,10 @@ See [security.md](security.md) for the full security model. The architecture-lev
 
 | Extension | Mechanism |
 |---|---|
-| Custom cache storage | Implement `search::CacheWriter` and pass it to `precompute_chunk` |
+| Custom cache storage | Implement `search::CacheWriter` and pass it to `sweep_and_cache` |
 | Custom progress reporting | Pass a custom `search::Progress` (or any type with the same `add`/`get` shape) |
 | Custom variant generation | Construct `search::OffsetVariant` instances directly and build a `VariantIndex` |
-| Custom session control | Call `search::perform_chunked_sweep` directly; bypass the orchestrator entirely |
+| Custom session control | Call `search::sweep_parallel` directly; bypass the orchestrator entirely |
 | Custom error handling | Match on `FindError` variants in the `Result` return type |
 
 The `CacheWriter` trait is **object-safe** (`Send + Sync` supertraits, no generics), enabling dynamic dispatch and runtime writer selection.

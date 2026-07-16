@@ -78,7 +78,7 @@ The benchmark generates 32 points `1·G, 2·G, ..., 32·G` once and then measure
 If a future commit shows a 5% regression in `batch_normalization_32`, possible causes are:
 
 - A change to the `k256` dependency.
-- A change to the `BATCH_SIZE` constant.
+- A change to the default `Config::batch_size` (formerly `BATCH_SIZE` constant in `search`).
 - A change to the `ProjectivePoint::batch_normalize` call site (e.g. switching from `&[ProjectivePoint]` to a different slice type).
 - Compiler upgrade affecting the inlined assembly.
 

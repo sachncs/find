@@ -302,7 +302,7 @@ replaced the previous `[T; MAX_BATCH]` stack arrays.
 ### CPU-bound path
 
 ```text
-function perform_chunked_sweep(index, start, end, batch_size):
+function sweep_parallel(index, start, end, batch_size):
     start = max(start, 1)
     if start > end:
         return None
@@ -343,7 +343,7 @@ without locks.
 ### Cached path
 
 ```text
-function perform_cached_sweep(index, cache_path, start_j):
+function sweep_cached(index, cache_path, start_j):
     file_size = cache_path.metadata().len
     if file_size % 32 != 0:
         return Err(CacheCorrupted)
@@ -374,7 +374,7 @@ any modular arithmetic; the only cryptographic work is the
 ### Precomputation path
 
 ```text
-function precompute_chunk(start, end, writer, index, progress, batch_size):
+function sweep_and_cache(start, end, writer, index, progress, batch_size):
     // Actual implementation uses Rayon par_iter with try_for_each
     // and a shared OnceLock<SearchMatch> for cross-batch early-exit
     // (replaced the previous Mutex + AtomicBool pair; see
@@ -432,7 +432,7 @@ This is in contrast to probabilistic methods (e.g. Pollard's rho, baby-step gian
 | Failure | Cause | Detection |
 |---|---|---|
 | Identity point in variant | `V·G = P` for some `V` | `generate_variants` skips with a warning |
-| Identity point in sweep | `j = 0` (impossible because `MIN_J = 1`) | Not reachable |
+| Identity point in sweep | `j = 0` (impossible because `MIN_SEARCH_SCALAR = 1`) | Not reachable |
 | Scalar overflow | Candidate exceeds `n` | `hex_to_scalar` returns `EccError` |
 | Cache truncation | Disk full during precomputation | `CacheCorrupted` on next read |
 | Checkpoint corruption | Disk error, manual edit, version skew | `ResearchIntegrityError` on resume |
@@ -560,7 +560,7 @@ is effectively free on the happy path — see
 [optimization-decisions/0002](../optimization-decisions/0002-variant-labels-once-lock.md)
 and [optimization-decisions/0007](../optimization-decisions/0007-oncelock-early-exit.md).
 
-`precompute_chunk`'s cross-batch match coordination uses
+`sweep_and_cache`'s cross-batch match coordination uses
 `OnceLock<SearchMatch>` (lock-free), which eliminates the previous
 `Mutex + AtomicBool` pair and makes worker-panic recovery unnecessary.
 
@@ -573,7 +573,7 @@ The cached path is ~100× faster on NVMe hardware but consumes 32 GB per billion
 
 ### Pre-allocation
 
-`FileCacheWriter::preallocate` is called once per chunk. On ext4, XFS, and APFS this issues a `fallocate` call that reserves contiguous disk space. The benefit is reduced fragmentation and slightly better sequential-write throughput.
+`BinaryCacheWriter::preallocate` is called once per chunk. On ext4, XFS, and APFS this issues a `fallocate` call that reserves contiguous disk space. The benefit is reduced fragmentation and slightly better sequential-write throughput.
 
 ## Trade-offs
 
@@ -610,7 +610,7 @@ For the intended use case (small-scalar search), the `u64` range is more than su
 
 When a variant anchor `V` equals the unknown private key `d`, the shifted target `P - V·G` is the identity point. The `generate_variants` function detects this and skips the variant (logging a warning). For typical targets, none of the 512 variants produce the identity; for pathological targets, the variant count is reduced.
 
-The identity point is also skipped in the sweep by clamping `start` to `MIN_J = 1`. The identity point has no X-coordinate, so a match at `j = 0` would be meaningless.
+The identity point is also skipped in the sweep by clamping `start` to `MIN_SEARCH_SCALAR = 1`. The identity point has no X-coordinate, so a match at `j = 0` would be meaningless.
 
 ### Y-parity ambiguity
 

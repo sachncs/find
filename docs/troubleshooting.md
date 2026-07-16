@@ -193,7 +193,7 @@ cargo +nightly miri test --workspace --all-features -- prop_to_hex_x_idempotent
 # unset PROPTEST_NO_PERSISTENCE (it is set by the CI workflow) and re-run.
 ```
 
-The non-Unix `Mutex<File>` inside `FileCacheWriter` is the only place where miri may flag a path; it has been exercised on `ubuntu-latest` in CI without issue. If a miri failure points elsewhere in the codebase, **the change must be reverted** per [CONTRIBUTING.md](../CONTRIBUTING.md).
+The non-Unix `Mutex<File>` inside `BinaryCacheWriter` is the only place where miri may flag a path; it has been exercised on `ubuntu-latest` in CI without issue. If a miri failure points elsewhere in the codebase, **the change must be reverted** per [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Getting help
 

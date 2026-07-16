@@ -146,7 +146,7 @@ The following are common performance anti-patterns that the tool's design avoids
 
 ## Inner-loop cycle breakdown
 
-The hot loop in `precompute_chunk` / `perform_chunked_sweep` spends its cycles across five distinct operations:
+The hot loop in `sweep_and_cache` / `sweep_parallel` spends its cycles across five distinct operations:
 
 ### Per-super-batch cost (default `BATCH_SIZE = 32`, `SUPER_BATCHES = 256`)
 
@@ -198,7 +198,7 @@ See [optimization-decisions/](optimization-decisions/) for the rationale behind 
 - `0002-variant-labels-once-lock.md` — caching `format!`-built labels in `OnceLock`
 - `0003-packed-variant-index.md` — splitting `VariantIndex` into `keys + order` arrays
 - `0004-atomic-flag-early-exit.md` — replacing per-batch `Mutex::lock` with an `AtomicBool` fast-path
-- `0005-cached-sweep-stack-buffer.md` — `perform_cached_sweep` over a 32 KiB stack scratch buffer
+- `0005-cached-sweep-stack-buffer.md` — `sweep_cached` over a 32 KiB stack scratch buffer
 - `0006-u256-decimal-no-biguint.md` — direct 256-bit divmod-by-10 instead of `BigUint::to_string`
 - `0007-oncelock-early-exit.md` — replacing `Mutex + AtomicBool` with a single `OnceLock<SearchMatch>`
 - `0008-super-batch-chaining.md` — chaining the bootstrap scalar multiplication across 256 consecutive batches via the `+ G` chain, eliminating ~99.6 % of bootstrap muls

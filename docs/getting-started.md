@@ -95,7 +95,7 @@ The tool automatically checkpoints progress. If the search is interrupted (Ctrl-
 
 The resume behavior is:
 
-1. Run `Config::validate` (shallow) and `Config::validate_pubkey` (deep, via `ecc::parse_pubkey`) on the current `--pubkey` value — fail-fast before any state is allocated.
+1. Run `Config::validate_fields` (shallow) and `Config::validate_pubkey` (deep, via `ecc::parse_pubkey`) on the current `--pubkey` value — fail-fast before any state is allocated.
 2. Read `data/checkpoint.json`.
 3. If the pubkey matches, verify the integrity anchor (the X-coordinate of `last_j · G`).
 4. If valid, resume from `last_j + 1`.
@@ -119,13 +119,13 @@ sequenceDiagram
     F->>F: parse args, init tracing
     F->>F: Config::try_with_batch_size(32) / try_with_variant_count(512)
     F->>O: run(&Config)
-    O->>O: Config::validate() (shallow)
+    O->>O: Config::validate_fields() (shallow)
     O->>O: Config::validate_pubkey() (deep, ecc::parse_pubkey)
     O->>S: generate_variants(target_p)
     S-->>O: &'static [OffsetVariant; 512]  (interned via OnceLock)
     O->>S: compute_variant_x_bytes(target_p)
     S-->>O: Vec<[u8; 32]> of length 512
-    O->>P: save_variants_to_json(metas, &x_bytes, dir)
+    O->>P: write_variants_json(metas, &x_bytes, dir)
     P->>FS: write data/points.json
     O->>S: VariantIndex::new(metas, &x_bytes)
     S-->>O: index (sorted by X)
@@ -134,7 +134,7 @@ sequenceDiagram
         O->>O: current_j = 0
     end
     O->>O: chunk_start = 1, chunk_end = 1_000_000_000
-    O->>S: perform_chunked_sweep(index, 1, 1_000_000_000, batch_size=32)
+    O->>S: sweep_parallel(index, 1, 1_000_000_000, batch_size=32)
     S->>S: for each batch of 32: scalar_mul_g + G chain + batch_normalize + match_x
     alt match found
         S-->>O: Some(SearchMatch { candidates: [Scalar; 2], .. })

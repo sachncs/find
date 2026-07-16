@@ -31,7 +31,7 @@ proptest! {
         let variants = search::generate_variants(&target_p);   // returns &'static [OffsetVariant]
         let x_bytes = search::compute_variant_x_bytes(&target_p);
         let index = search::VariantIndex::new(variants, &x_bytes);
-        let result = search::perform_chunked_sweep(&index, j, j, 32);  // batch_size = 32
+        let result = search::sweep_parallel(&index, j, j, 32);  // batch_size = 32
         prop_assert!(result.is_some());
         let m = result.unwrap();
         prop_assert!(m.candidates.contains(&expected_scalar));  // [Scalar; 2] post-12
@@ -43,8 +43,8 @@ proptest! {
 Property-based tests in the repository:
 
 - [`tests/integration.rs::prop_search_finds_any_scalar_in_range`](../tests/integration.rs)
-- [`tests/integration.rs::prop_batch_size_runtime`](../tests/integration.rs) — exercises `perform_chunked_sweep` over the runtime `Config::batch_size` range (1..=256) and asserts the match is invariant under the batch choice (commit 7b)
-- [`tests/integration.rs::prop_precompute_chunk_roundtrip`](../tests/integration.rs)
+- [`tests/integration.rs::prop_batch_size_runtime`](../tests/integration.rs) — exercises `sweep_parallel` over the runtime `Config::batch_size` range (1..=256) and asserts the match is invariant under the batch choice (commit 7b)
+- [`tests/integration.rs::prop_sweep_and_cache_roundtrip`](../tests/integration.rs)
 - [`tests/audit.rs::prop_audit_recovers_any_small_scalar`](../tests/audit.rs)
 - [`src/ecc.rs::prop_sub_reversibility`](../src/ecc.rs)
 - [`src/ecc.rs::prop_sub_curve_membership`](../src/ecc.rs)
@@ -106,10 +106,10 @@ The system-resilience tests verify the persistence layer and the orchestrator's 
 | `test_cached_sweep_empty_file` | An empty cache returns `Ok(None)` without error |
 | `test_cached_sweep_corrupted_size` | A cache whose size is not a multiple of 32 raises `CacheCorrupted` |
 | `test_cached_sweep_write_and_read_back` | End-to-end cache write + read with a known match |
-| `test_file_cache_writer_create` | `FileCacheWriter::create` makes parent directories |
-| `test_file_cache_writer_write_and_read_back` | `FileCacheWriter` round-trip for a known block |
+| `test_file_cache_writer_create` | `BinaryCacheWriter::create` makes parent directories |
+| `test_file_cache_writer_write_and_read_back` | `BinaryCacheWriter` round-trip for a known block |
 | `test_orchestrator_rejects_malformed_pubkey` | `run()` returns an error for invalid input |
-| `test_config_validate_rejects_empty_pubkey` | `Config::validate` rejects whitespace-only pubkey |
+| `test_config_validate_rejects_empty_pubkey` | `Config::validate_fields` rejects whitespace-only pubkey |
 
 The fail-fast parsing tests inject invalid SEC1 prefixes (e.g. `0x05`) and malformed hex strings to ensure no silent failures. The zero-copy integrity is checked via `cargo clippy` to ensure no redundant heap allocations are introduced into the search loop.
 

@@ -58,18 +58,20 @@ items marked **Compile-time** require an edit + rebuild.
 | Constant | Defined in | Kind | Value | Purpose |
 |---|---|---|---|---|
 | `MAX_SEARCH` | `src/orchestrator.rs` | Compile-time | `u64::MAX` (2^64 - 1) | Theoretical upper bound of the search range |
-| `MIN_J` | `src/orchestrator.rs` | Compile-time | `1` | Minimum non-zero search scalar (excludes the identity point) |
+| `MIN_SEARCH_SCALAR` | `src/config.rs` | Compile-time | `1` | Minimum non-zero search scalar (excludes the identity point) |
 | `DEFAULT_CACHE_CHUNK_SIZE` | `src/orchestrator.rs` | Runtime (default) | `1_000_000_000` | Scalars per cache chunk (one billion) |
 | `BatchSize::DEFAULT.get()` | `src/config.rs` | Runtime (default) | `32` | Default points per batch normalization |
 | `BatchSize::MIN ..= MAX` | `src/config.rs` | Compile-time | `1 ..= 256` | Legal range of `Config::batch_size` |
 | `MAX_VARIANT_COUNT` | `src/config.rs` | Compile-time | `512` | Largest legal `Config::variant_count` |
 | `TRILLION` | `src/orchestrator.rs` | Compile-time | `1_000_000_000_000` | Step size for human-readable audit-boundary logging |
 
-The previous `BATCH_SIZE` constant in `src/search.rs` is retained as
-a public constant for benchmark / documentation use; the runtime-controlling
-value is `Config::batch_size` of type `BatchSize`. The constant pool was
-split in commit 7a, and the hot-path arrays were moved to heap
-allocation in commit 7b (see [ADR-0009](adr/0009-runtime-batch-size.md)).
+The previous `BATCH_SIZE` constant in `src/search.rs` was redundant with
+`config::DEFAULT_BATCH_SIZE` and was removed; the runtime-controlling
+value is `Config::batch_size` of type `BatchSize`. The constant pool
+was split in commit 7a, the hot-path arrays were moved to heap
+allocation in commit 7b (see [ADR-0009](adr/0009-runtime-batch-size.md)),
+and the duplicate `search::BATCH_SIZE` was removed during the rename
+pass.
 
 ### Audit boundary
 
@@ -178,7 +180,7 @@ The four failure modes are reported as distinct `FindError` variants:
 
 | Validation | Source | Failure mode |
 |---|---|---|
-| `Config::pubkey` is non-empty / non-whitespace | `Config::validate` (shallow) | `FindError::InvalidPublicKey("Public key cannot be empty")` |
+| `Config::pubkey` is non-empty / non-whitespace | `Config::validate_fields` (shallow) | `FindError::InvalidPublicKey("Public key cannot be empty")` |
 | `Config::pubkey` parses as a SEC1 point (wrong prefix, off-curve, etc.) | `Config::validate_pubkey` (deep — delegates to `ecc::parse_pubkey`) | `FindError::InvalidPublicKey(...)` or `FindError::HexError(...)` |
 | `Config::batch_size` is in `1..=256` | `Config::try_with_batch_size` | `FindError::InvalidConfig(...)` |
 | `Config::variant_count` is in `1..=512` | `Config::try_with_variant_count` | `FindError::InvalidConfig(...)` |

@@ -29,10 +29,10 @@ The non-blocking file writer is critical: it ensures that the I/O cost of writin
 | Level | When used | Source |
 |---|---|---|
 | `error` | Recoverable errors that the process cannot continue past; e.g. checkpoint integrity violation | `src/persistence.rs::save_atomic`, `src/orchestrator.rs::run` |
-| `warn` | Conditions that affect behavior but are not fatal; e.g. checkpoint pubkey mismatch, Rayon worker panic | `src/orchestrator.rs::run`, `src/search.rs::precompute_chunk` |
+| `warn` | Conditions that affect behavior but are not fatal; e.g. checkpoint pubkey mismatch, Rayon worker panic | `src/orchestrator.rs::run`, `src/search.rs::sweep_and_cache` |
 | `info` | Lifecycle events: startup, segment boundaries, matches, audit boundaries | `src/main.rs::main`, `src/orchestrator.rs::run` |
 | `debug` | Per-call events: pubkey parse, checkpoint load/save, cache miss/hit | `src/ecc.rs::parse_pubkey`, `src/orchestrator.rs::run` |
-| `trace` | Per-batch events: scalar multiplication, batch normalization, cache writes | `src/search.rs::precompute_chunk`, `src/persistence.rs::perform_cached_sweep` |
+| `trace` | Per-batch events: scalar multiplication, batch normalization, cache writes | `src/search.rs::sweep_and_cache`, `src/persistence.rs::sweep_cached` |
 
 `trace` level produces a very high volume of events and is intended for short diagnostic runs only. Running at `trace` for a long search will fill the disk quickly.
 
@@ -86,14 +86,14 @@ let _ = rayon::ThreadPoolBuilder::new()
 By default, a Rayon worker panic causes the entire process to abort. The custom handler logs the panic and continues. The hot path uses
 [`OnceLock<SearchMatch>`](../optimization-decisions/0007-oncelock-early-exit.md)
 for cross-batch coordination, which has **no mutex** to poison; the only
-`Mutex` left in the application (`FileCacheWriter`'s non-Unix fallback
+`Mutex` left in the application (`BinaryCacheWriter`'s non-Unix fallback
 in `src/persistence.rs`) cannot be reached by the worker panics handled
 here. This makes the tool more robust to transient worker errors at the
 cost of potentially returning a partial result.
 
 ## Per-batch tracing (debug/trace only)
 
-At the `debug` level, `src/ecc.rs::parse_pubkey` emits a single event per call. At the `trace` level, `src/search.rs::precompute_chunk` emits events for every batch:
+At the `debug` level, `src/ecc.rs::parse_pubkey` emits a single event per call. At the `trace` level, `src/search.rs::sweep_and_cache` emits events for every batch:
 
 ```
 TRACE find::search: precompute batch 0/31250000

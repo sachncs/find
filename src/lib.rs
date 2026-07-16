@@ -68,8 +68,8 @@
 //!         false,
 //!     );
 //!     let match_ = find::orchestrator::run(&config)?;
-//!     if let Some(m) = match_ {
-//!         println!("Found candidates: {:?}", m.candidates);
+//!     if let Some(match_) = match_ {
+//!         println!("Found candidates: {:?}", match_.candidates);
 //!     }
 //!     Ok(())
 //! }

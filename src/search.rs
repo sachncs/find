@@ -361,12 +361,7 @@ impl SearchMatch {
     /// assert_eq!(m.j, 2);
     /// assert_eq!(m.label, "2^0");
     /// ```
-    pub fn new(
-        label: &'static str,
-        offset: &'static str,
-        j: u64,
-        candidates: [Scalar; 2],
-    ) -> Self {
+    pub fn new(label: &'static str, offset: &'static str, j: u64, candidates: [Scalar; 2]) -> Self {
         Self {
             label,
             offset,

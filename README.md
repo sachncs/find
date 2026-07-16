@@ -96,7 +96,7 @@ let config = Config::new(pubkey, "data", false)
 
 let match_ = orchestrator::run(&config)?;
 if let Some(m) = match_ {
-    println!("MATCH DISCOVERED via {} at j={}", m.label, m.small_scalar);
+    println!("MATCH DISCOVERED via {} at j={}", m.label, m.j);
     println!("Candidates (d = V ± j): {:?}", m.candidates_hex());
 }
 # Ok::<(), find::error::FindError>(())
@@ -212,13 +212,22 @@ review-driven pass:
 | `Config::batch_size` field | `pub batch_size: u32` | `pub batch_size: BatchSize` (commit 7a) |
 | `Config::{with_batch_size, with_variant_count}` builders | `fn(self, u32) -> Self` (panicking) | `#[deprecated]`; replaced by `try_with_*` builders returning `Result<Self, FindError>` |
 | `--batch-size` honoured at runtime | ignored; fixed at `MAX_BATCH = 32` | honoured via heap-allocated runtime-sized batches (commit 7b) |
-| `Config::validate` | shallow check only | `Config::validate()` retained (shallow) + new `Config::validate_pubkey()` deep validation (commit 3) |
+| `Config::validate` | shallow check only | renamed to `Config::validate_fields`; `Config::validate_pubkey()` deep validation retained (commit 3 + rename pass) |
 | `find::search::SearchMatch::candidates` | `pub candidates: [String; 2]` | `pub candidates: [Scalar; 2]` (commit 12, breaking) |
 | `SearchMatch::candidates_as_scalars` | `pub fn(&self) -> Result<[Scalar; 2]>` | `pub fn(&self) -> [Scalar; 2]` (no parsing needed) |
 | `SearchMatch::candidates_hex()` | (did not exist) | new: returns `[String; 2]` |
 | `find::search::generate_variants` | `-> Vec<OffsetVariant>` | `-> &'static [OffsetVariant]` (commit 7c, breaking) |
 | `find::search::VariantIndex::new` | `fn(variants: Vec<OffsetVariant>) -> Self` | `fn(variants: &'static [OffsetVariant], x_bytes: &[[u8; 32]]) -> Self` |
-| `find::search::OffsetVariant` | carries `x_bytes: [u8; 32]` | no longer carries `x_bytes` (use new `compute_variant_x_bytes` helper) |
+| `find::search::OffsetVariant` | carries `x_bytes: [u8; 32]` | no longer carries `x_bytes`; `offset` field renamed to `offset_decimal` (use new `compute_variant_x_bytes` helper) |
+| `SearchMatch::small_scalar` | `pub small_scalar: u64` | renamed to `SearchMatch::j: u64` |
+| `find::search::perform_chunked_sweep` | — | renamed to `find::search::sweep_parallel` |
+| `find::search::precompute_chunk` | — | renamed to `find::search::sweep_and_cache` |
+| `find::persistence::perform_cached_sweep` | — | renamed to `find::persistence::sweep_cached` |
+| `find::persistence::FileCacheWriter` | `pub struct FileCacheWriter` | renamed to `find::persistence::BinaryCacheWriter` |
+| `find::persistence::save_variants_to_json` | — | renamed to `find::persistence::write_variants_json` |
+| `find::telemetry::install_rayon_panic_handler` | — | renamed to `find::telemetry::install_worker_panic_handler` |
+| `find::search::BATCH_SIZE` const | `pub const BATCH_SIZE: u64 = 32` | **removed** (use `find::config::DEFAULT_BATCH_SIZE`) |
+| `find::config::MIN_J` const | `pub const MIN_J: u64 = 1` | renamed to `find::config::MIN_SEARCH_SCALAR` |
 | `find::config::SweepRange` | available | **removed** (commit 8) |
 | `find::search::MAX_BATCH` const | `pub const MAX_BATCH: usize = 32` | **removed** (commit 7b) |
 | Doctest `Box<dyn std::error::Error>` | in 6+ places | replaced with `Box<dyn core::error::Error>` (commit 16, MSRV 1.81) |
@@ -258,10 +267,10 @@ find/
 │   ├── config.rs       # Config, BatchSize newtype, validation, MAX_BATCH_SIZE / MAX_VARIANT_COUNT
 │   ├── ecc.rs          # SEC1 parsing, point arithmetic, hex conversion, to_hex_x
 │   ├── error.rs        # FindError (8 variants) + Result alias
-│   ├── search.rs       # Pure domain logic: VariantIndex, generate_variants, perform_chunked_sweep,
-│   │                   #   precompute_chunk, compute_variant_x_bytes, CacheWriter trait, Progress
-│   ├── persistence.rs  # Checkpoint save/load, FileCacheWriter, perform_cached_sweep,
-│   │                   #   save_variants_to_json (the only libc::fsync unsafe lives here)
+│   ├── search.rs       # Pure domain logic: VariantIndex, generate_variants, sweep_parallel,
+│   │                   #   sweep_and_cache, compute_variant_x_bytes, CacheWriter trait, Progress
+│   ├── persistence.rs  # Checkpoint save/load, BinaryCacheWriter, sweep_cached,
+│   │                   #   write_variants_json (the only libc::fsync unsafe lives here)
 │   ├── orchestrator.rs # run(&Config) entry point + checkpoint/lifecycle loop
 │   └── telemetry.rs    # tracing-subscriber + Rayon panic handler
 ├── tests/

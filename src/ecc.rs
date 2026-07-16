@@ -179,13 +179,15 @@ pub fn scalar_mul_g(d: &Scalar) -> ProjectivePoint {
 
 /// Computes the point difference \(R = P - Q\) in projective coordinates.
 ///
-/// Subtraction is performed as \(P + (-Q)\), where \(-Q\) is the additive
-/// inverse.
-///
 /// # Security
 ///
 /// Not constant-time; the negation and mixed addition are both exposed
 /// to timing side-channels.
+///
+/// # Implementation
+///
+/// Subtraction is performed as \(P + (-Q)\), where \(-Q\) is the additive
+/// inverse.
 #[inline(always)]
 pub fn subtract(p: &ProjectivePoint, q: &ProjectivePoint) -> ProjectivePoint {
     p - q

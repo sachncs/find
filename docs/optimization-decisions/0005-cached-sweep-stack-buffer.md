@@ -1,4 +1,4 @@
-# 0005 — `perform_cached_sweep` over a 32 KiB stack scratch buffer
+# 0005 — `sweep_cached` over a 32 KiB stack scratch buffer
 
 - **Status:** Accepted
 - **Date:** 2026-07-14
@@ -7,7 +7,7 @@
 
 ## Context
 
-The previous `perform_cached_sweep` looped `BufReader::read_exact`
+The previous `sweep_cached` looped `BufReader::read_exact`
 over a 32-byte buffer. Although `BufReader` amortises reads
 internally (its default 8 KiB buffer), each `match_x` call still
 paid the BufReader state-machine cost and the `read_exact`
@@ -34,4 +34,4 @@ index slice-by-slice; refill the buffer only when drained.
 
 ## References
 
-- Source: [`src/persistence.rs::perform_cached_sweep`](../../src/persistence.rs)
+- Source: [`src/persistence.rs::sweep_cached`](../../src/persistence.rs)

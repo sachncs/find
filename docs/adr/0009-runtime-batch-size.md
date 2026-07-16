@@ -7,7 +7,7 @@
 
 ## Context
 
-The hot-path batch arrays (`points: Vec<ProjectivePoint>`, `affines: Vec<AffinePoint>`, `block: Vec<u8>`) in `perform_chunked_sweep` and `precompute_chunk` were previously sized at compile time using the constant `MAX_BATCH = 32`. The runtime `--batch-size` CLI flag accepted values up to 256, but the engine silently ignored anything other than 32 because the stack arrays were stack-allocated with the wrong size.
+The hot-path batch arrays (`points: Vec<ProjectivePoint>`, `affines: Vec<AffinePoint>`, `block: Vec<u8>`) in `sweep_parallel` and `sweep_and_cache` were previously sized at compile time using the constant `MAX_BATCH = 32`. The runtime `--batch-size` CLI flag accepted values up to 256, but the engine silently ignored anything other than 32 because the stack arrays were stack-allocated with the wrong size.
 
 This made it impossible to:
 
@@ -31,7 +31,7 @@ The batch offset calculation tracks the runtime batch size:
 let offset = batch_idx * (batch_size as u64) * 32;
 ```
 
-Both `perform_chunked_sweep` and `precompute_chunk` gain a trailing `batch_size: u32` parameter; the orchestrator passes `config.batch_size.get()`.
+Both `sweep_parallel` and `sweep_and_cache` gain a trailing `batch_size: u32` parameter; the orchestrator passes `config.batch_size.get()`.
 
 The compile-time `MAX_BATCH` constant is removed from the crate surface (the array size is now runtime, no compile-time bound remains).
 
@@ -45,11 +45,11 @@ The compile-time `MAX_BATCH` constant is removed from the crate surface (the arr
 **Negative:**
 - A few hundred nanoseconds of allocator overhead per batch in the worst case (heap allocation is bounded by batch count per chunk; amortised across `BATCH_SIZE` scalars).
 - The `Vec::with_capacity` calls in the inner loop are visible in flamegraphs (small but present).
-- External code that called `perform_chunked_sweep` or `precompute_chunk` needs to be updated to pass `batch_size`.
+- External code that called `sweep_parallel` or `sweep_and_cache` needs to be updated to pass `batch_size`.
 
 ## References
 
-- Source: [`src/config.rs::BatchSize`](../../src/config.rs), [`src/search.rs::perform_chunked_sweep`](../../src/search.rs), [`src/search.rs::precompute_chunk`](../../src/search.rs)
+- Source: [`src/config.rs::BatchSize`](../../src/config.rs), [`src/search.rs::sweep_parallel`](../../src/search.rs), [`src/search.rs::sweep_and_cache`](../../src/search.rs)
 - Tests: [`tests/integration.rs::prop_batch_size_runtime`](../../tests/integration.rs)
 - ADR-0002 (batch normalization) — the algorithmic justification for batched processing
 - Commits: 7a (the `BatchSize` newtype), 7b (the runtime-sized arrays)

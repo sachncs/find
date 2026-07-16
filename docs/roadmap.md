@@ -17,7 +17,7 @@ All near-term items in the previous roadmap have shipped as part of commits 1–
 | `Config::validate_pubkey` (deep SEC1 fail-fast) + `FindError::InvalidConfig` | 3 | CHANGELOG |
 | `to_hex_x` ↔ `x_bytes` round-trip regression test (`tests/kat.rs`) | 4 | code inline |
 | `to_hex_x` uses `AffineCoordinates::x()` directly | 5 | opt-decision 0001 (predates commit) |
-| `OnceLock<SearchMatch>` in `precompute_chunk` | 6 | [opt-decision 0007](../optimization-decisions/0007-oncelock-early-exit.md) |
+| `OnceLock<SearchMatch>` in `sweep_and_cache` | 6 | [opt-decision 0007](../optimization-decisions/0007-oncelock-early-exit.md) |
 | `BatchSize` newtype + `try_with_*` fallible builders | 7a | CHANGELOG |
 | Heap-allocated hot-path batch arrays + `Config::batch_size` honoured at runtime | 7b | [ADR-0009](../adr/0009-runtime-batch-size.md) |
 | Interned `&'static [OffsetVariant]` + `compute_variant_x_bytes` helper | 7c | opt-decisions 0002 |

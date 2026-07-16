@@ -1,4 +1,4 @@
-# 0007 — `OnceLock<SearchMatch>` replaces `Mutex<Option<SearchMatch>> + AtomicBool` in `precompute_chunk`
+# 0007 — `OnceLock<SearchMatch>` replaces `Mutex<Option<SearchMatch>> + AtomicBool` in `sweep_and_cache`
 
 - **Status:** Accepted
 - **Date:** 2026-07-15 (review-driven pass)
@@ -7,7 +7,7 @@
 
 ## Context
 
-`precompute_chunk` previously used a two-part cross-worker coordination mechanism:
+`sweep_and_cache` previously used a two-part cross-worker coordination mechanism:
 
 1. A `Mutex<Option<SearchMatch>>` holding the first discovered match.
 2. An `AtomicBool` named `match_published` flipped to `true` under `Release` ordering the moment the mutex recorded a match.
@@ -33,11 +33,11 @@ Replace the two-part mechanism with a single `std::sync::OnceLock<SearchMatch>`.
 
 **Negative:**
 - `OnceLock<T>` requires `T: Sync`, which [`SearchMatch`] satisfies (the inner `String` fields are `Send + Sync` and `Scalar` is `Send + Sync`). No actual negative.
-- One static allocation per `precompute_chunk` invocation (negligible: tens of bytes per sweep chunk).
+- One static allocation per `sweep_and_cache` invocation (negligible: tens of bytes per sweep chunk).
 
 ## References
 
-- Source: [`src/search.rs::precompute_chunk`](../../src/search.rs)
+- Source: [`src/search.rs::sweep_and_cache`](../../src/search.rs)
 - ADR-0008 (mutex poisoning policy) — implicitly superseded for this specific use case
 - Commit: 6
 

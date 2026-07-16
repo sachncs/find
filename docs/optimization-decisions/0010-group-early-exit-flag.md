@@ -1,4 +1,4 @@
-# 0010 — Group-level early-exit flag in `perform_chunked_sweep`
+# 0010 — Group-level early-exit flag in `sweep_parallel`
 
 - **Status:** Accepted
 - **Date:** 2026-07-16
@@ -7,7 +7,7 @@
 
 ## Context
 
-`perform_chunked_sweep` uses Rayon's `find_map_any` to provide
+`sweep_parallel` uses Rayon's `find_map_any` to provide
 early-exit when a match is found. `find_map_any` cancels other
 tasks **between** iterations (i.e., between super-batches) but not
 within them. A super-batch is 256 batches × 32 points = 8 192
@@ -52,7 +52,7 @@ at j=12 345 (super-batch 2, group 2), the wasted work drops from
 
 ### Negative
 
-- Adds one `AtomicBool` per `perform_chunked_sweep` call. Trivial.
+- Adds one `AtomicBool` per `sweep_parallel` call. Trivial.
 - `Ordering::Acquire` is slightly more expensive than `Relaxed`
   but ensures the result of the matching worker's `find_map_any`
   return is visible to other workers. Necessary for correctness.

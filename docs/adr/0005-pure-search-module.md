@@ -34,7 +34,7 @@ pub trait CacheWriter: Send + Sync {
 }
 ```
 
-The `persistence` module provides the production implementation, [`FileCacheWriter`](../../src/persistence.rs). Tests provide trivial in-memory implementations (`NullWriter`).
+The `persistence` module provides the production implementation, [`BinaryCacheWriter`](../../src/persistence.rs). Tests provide trivial in-memory implementations (`NullWriter`).
 
 Progress reporting is similarly injected: the search engine takes a `&Progress` argument and updates its counter. `Progress` is a thin wrapper over `AtomicU64` with `Relaxed` ordering — see [`src/search.rs::Progress`](../../src/search.rs).
 
@@ -44,8 +44,8 @@ The `CacheWriter` trait is **object-safe** (`Send + Sync` supertraits, no generi
 
 **Positive:**
 
-- **Testability.** Tests for `perform_chunked_sweep` and `precompute_chunk` use a `NullWriter` that always returns `Ok(())`. No file system setup required.
-- **Portability.** Platform-specific code (`pwrite_at` on Unix, `seek + write_all` on Windows) is isolated to the `FileCacheWriter` implementation in `persistence.rs`.
+- **Testability.** Tests for `sweep_parallel` and `sweep_and_cache` use a `NullWriter` that always returns `Ok(())`. No file system setup required.
+- **Portability.** Platform-specific code (`pwrite_at` on Unix, `seek + write_all` on Windows) is isolated to the `BinaryCacheWriter` implementation in `persistence.rs`.
 - **Reusability.** The `search` module can be used by library consumers who want only the compute pipeline, e.g. for in-memory benchmark harnesses.
 - **Single responsibility.** The `search` module answers "given a variant index and a scalar range, where is the match?" The `persistence` module answers "how do I save things to disk?". The two are composed by the orchestrator.
 
@@ -61,7 +61,7 @@ The `CacheWriter` trait is **object-safe** (`Send + Sync` supertraits, no generi
 The simplest implementation. Rejected for the testability, portability, and reusability reasons above.
 
 ### 2. Generic `W: CacheWriter` parameter (not trait-object)
-A generic `precompute_chunk<W: CacheWriter>(...)` would enable monomorphization and remove the virtual dispatch. The current implementation actually uses this pattern for `precompute_chunk` (see [`src/search.rs::precompute_chunk`](../../src/search.rs)). `perform_chunked_sweep` does not need a writer and is therefore not generic.
+A generic `sweep_and_cache<W: CacheWriter>(...)` would enable monomorphization and remove the virtual dispatch. The current implementation actually uses this pattern for `sweep_and_cache` (see [`src/search.rs::sweep_and_cache`](../../src/search.rs)). `sweep_parallel` does not need a writer and is therefore not generic.
 
 ### 3. Closures instead of a trait
 Pass `&dyn Fn(u64, &[u8]) -> std::io::Result<()>` as the writer. Rejected because:
@@ -80,6 +80,6 @@ The `search` module could accept `Arc<File>` and call `pwrite_at` directly. Reje
 
 ## References
 
-- Source: [`src/search.rs`](../../src/search.rs) (trait definition and consumers), [`src/persistence.rs::FileCacheWriter`](../../src/persistence.rs) (production implementation)
-- Tests: [`src/search.rs::tests::test_precompute_chunk_finds_match`](../../src/search.rs), [`tests/orchestrator.rs::test_orchestrator_finds_small_scalar_with_cache`](../../tests/orchestrator.rs)
+- Source: [`src/search.rs`](../../src/search.rs) (trait definition and consumers), [`src/persistence.rs::BinaryCacheWriter`](../../src/persistence.rs) (production implementation)
+- Tests: [`src/search.rs::tests::test_sweep_and_cache_finds_match`](../../src/search.rs), [`tests/orchestrator.rs::test_orchestrator_finds_small_scalar_with_cache`](../../tests/orchestrator.rs)
 - Architecture: [architecture.md#search-layer](../architecture.md#search-layer)

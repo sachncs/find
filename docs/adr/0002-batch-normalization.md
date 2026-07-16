@@ -69,7 +69,7 @@ The `k256` crate offers several other methods (`to_affine`, manual `invert` via 
 
 ## References
 
-- Source: [`src/search.rs::perform_chunked_sweep`](../../src/search.rs), [`src/search.rs::precompute_chunk`](../../src/search.rs)
+- Source: [`src/search.rs::sweep_parallel`](../../src/search.rs), [`src/search.rs::sweep_and_cache`](../../src/search.rs)
 - Benchmark: [`benches/bench.rs::bench_batch_normalization`](../../benches/bench.rs)
 - Algorithm: [algorithms.md#batch-normalization](../algorithms.md#batch-normalization)
 - Wikipedia: <https://en.wikipedia.org/wiki/Montgomery%27s_modular_multiplication#Montgomery_simultaneous_inversion>

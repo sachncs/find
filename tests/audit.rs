@@ -44,10 +44,7 @@ fn test_rigorous_recovery_1234567890() {
     let m = result.expect("Sweep MUST recover the match for scalar 1234567890");
 
     assert_eq!(m.label, "2^30", "Must match via the 2^30 variant");
-    assert_eq!(
-        m.j, 160_826_066,
-        "Must match at j = d - 2^30 = 160826066"
-    );
+    assert_eq!(m.j, 160_826_066, "Must match at j = d - 2^30 = 160826066");
     assert_eq!(m.offset, "1073741824", "Offset must be 2^30");
 
     let recovered_scalar = ecc::hex_to_scalar(&known_d_hex).unwrap();

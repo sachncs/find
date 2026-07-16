@@ -226,10 +226,75 @@ commit and its commit timestamp.
   behaviour is unchanged; downstream crates that pin to MSRV ≤ 1.80
   must delay their upgrade or vendor the `core::error::Error` trait.
 
+### Fixed (name audit pass)
+
+- **Orphan rustdoc block above `perform_chunked_sweep`** (now `sweep_parallel`)
+  in `src/search.rs`: a second `///` block parsed as a stray comment with
+  no item to attach to. Deleted.
+- **Dead test helper `hex_to_scalar_for_test`** in `src/search.rs`: duplicated
+  `ecc::hex_to_scalar` modulo the `Result` vs `Option` wrapper. The
+  justification comment claimed a cross-module dependency, but `search`
+  already depends on `ecc` and calls `ecc::hex_to_scalar` elsewhere. Use
+  the public function directly.
+- **`ecc::subtract` doc-comment restructure**: the implementation detail
+  ("Subtraction is performed as P + (-Q)") moved into a `# Implementation`
+  heading so the function description leads with what it does, not how.
+
+### Changed (rename pass — breaking)
+
+The naming-audit pass hard-renamed ten public symbols. Each rename is
+called out individually in its own commit; this rollup groups them.
+
+- **`find::telemetry::install_rayon_panic_handler` → `install_worker_panic_handler`**.
+  The function name leaked the threading library (`rayon`) into the public
+  API. `telemetry` already hides implementation choices; this one name
+  made swapping Rayon for a custom pool break the API for no reason.
+- **`find::persistence::FileCacheWriter` → `BinaryCacheWriter`**. `File`
+  was the on-disk format detail, not the domain concept. ADR-0006 calls
+  the format "binary cache format" throughout; the struct's contract is
+  "writes 32-byte X-coordinate blocks at offsets".
+- **`find::search::perform_chunked_sweep` → `sweep_parallel`**. Drops the
+  vague `perform_` prefix the project's naming guide rejects.
+- **`find::search::precompute_chunk` → `sweep_and_cache`**. Describes what
+  the function actually does (a sweep whose side-effect is a cache write,
+  not a precomputation the main work depends on).
+- **`find::persistence::perform_cached_sweep` → `sweep_cached`**. Same
+  `perform_` rationale; consistent verb with the other sweep functions.
+- **`find::persistence::save_variants_to_json` → `write_variants_json`**.
+  The `_to_json` suffix is not used elsewhere in the crate. The function
+  returns a `String` path, not JSON itself.
+- **`OffsetVariant::offset` → `OffsetVariant::offset_decimal`**. The field
+  is the *decimal-string* form of the offset scalar; the sibling field
+  `v_scalar: Scalar` carries the reduced value. Two names for the same
+  quantity in different representations; the suffix makes the encoding
+  explicit.
+- **`SearchMatch::small_scalar` → `SearchMatch::j`**. Matches the math
+  symbol used in `docs/algorithms.md` and every doc comment. Test and
+  benchmark *function names* that contain "small_scalar" (`bench_end_to_end_small_scalar`,
+  `test_orchestrator_finds_small_scalar`) refer to the concept of a
+  small scalar target and stay.
+- **`find::config::MIN_J` → `MIN_SEARCH_SCALAR`**. Sibling constants
+  (`MAX_SEARCH`, `DEFAULT_CACHE_CHUNK_SIZE`) use full words; `_J` only
+  makes sense if you already know the algorithm.
+- **`Config::validate` → `Config::validate_fields`**. The shallow check
+  is documented as "non-empty / not whitespace-only", not as a strength
+  of validation. The sibling `validate_pubkey` is the depth-validator;
+  naming both by what they check (fields vs pubkey) is more honest than
+  by validation depth.
+- **`ecc::parse_pubkey(hex_str)` and `ecc::hex_to_scalar(hex_str)` parameter
+  rename** to `hex` (non-breaking: parameter names are not part of the
+  public API for free functions).
+
+### Removed (rename pass)
+
+- **`pub const search::BATCH_SIZE: u64 = 32`** removed. Redundant with
+  `find::config::DEFAULT_BATCH_SIZE`; only a doctest and prose comments
+  referenced it. Use `find::config::DEFAULT_BATCH_SIZE` instead.
+
 ### Migration notes (0.1.6 → next)
 
 - `search::SearchMatch::candidates` field type changed; see commit 12.
-- `search::perform_chunked_sweep` and `search::precompute_chunk` gained
+- `search::sweep_parallel` and `search::sweep_and_cache` gained
   a trailing `batch_size: u32` parameter; see commit 7b.
 - `search::VariantIndex::new` now takes `(&'static [OffsetVariant], &[[u8; 32]])`
   instead of `Vec<OffsetVariant>`; see commit 7c. `generate_variants`
@@ -456,3 +521,65 @@ SHA, ISO-8601 commit date, and one-line summary. Generated from
 | `6661c4e` | 2026-07-14 | build(makefile): add pgo, all-checks, audit, flamegraph, doc-check targets. |
 | `80e8ede` | 2026-07-14 | docs(readme): add Performance and Research reproducibility sections. |
 | `6082a8e` | 2026-07-14 | ci: add bench (informational) and coverage-gate steps. |
+| `6881765` | 2026-07-14 | fix(deps): bump crossbeam-epoch 0.9.18 -> 0.9.20 to clear RUSTSEC-2026-0204. |
+| `a439b1a` | 2026-07-14 | docs(changelog): final commit-log rollup for the perf + open-source pass. |
+| `f25c146` | 2026-07-14 | chore: prepare repository for production release. |
+| `3c4ae13` | 2026-07-14 | chore: standardize README to reference format. |
+| `7a3d8a5` | 2026-07-14 | fix: correct version to 0.1.6 to match latest release. |
+| `5fbefa0` | 2026-07-14 | chore: record current perf baseline. |
+| `a341ae3` | 2026-07-14 | perf(search): remove unsafe from u256_to_decimal. |
+| `6b0b9d7` | 2026-07-15 | docs(persistence): tighten libc::fsync SAFETY comment. |
+| `39d63fe` | 2026-07-15 | feat(config): add Config::validate_pubkey for fail-fast on malformed pubkeys. |
+| `392bc79` | 2026-07-15 | tests(kat): add to_hex_x <-> x_bytes round-trip regression test. |
+| `40ee4c5` | 2026-07-15 | perf(ecc): to_hex_x uses AffineCoordinates::x() directly. |
+| `7d8b1da` | 2026-07-15 | perf(search): OnceLock<SearchMatch> replaces Mutex+AtomicBool in precompute_chunk. |
+| `433016e` | 2026-07-15 | feat(config): BatchSize newtype + try_with_* builders; deprecate with_*. |
+| `35b75d0` | 2026-07-15 | perf(search): runtime-sized batch arrays; honour config.batch_size. |
+| `542a1d1` | 2026-07-15 | perf(search): generate_variants returns &'static [OffsetVariant]; remove per-session String allocations. |
+| `e665f29` | 2026-07-15 | refactor(config): remove unused SweepRange newtype. |
+| `06951c1` | 2026-07-15 | feat(search): SearchMatch.candidates is [Scalar; 2] (breaking). |
+| `fed217c` | 2026-07-15 | refactor(persistence): replace try_into+expect with copy_from_slice in cached sweep. |
+| `9127504` | 2026-07-15 | chore(lints): add [lints] section with curated pedantic + nursery. |
+| `59227e3` | 2026-07-15 | docs(adr,opt-decisions): docs refresh for the review-driven pass. |
+| `dfe68a3` | 2026-07-15 | ci: add required-for-merge cargo miri job. |
+| `12ba297` | 2026-07-15 | chore(verify): pass full verification suite; record perf-regression status. |
+| `45dd8e3` | 2026-07-15 | chore(msrv): bump to 1.81 for core::error::Error. |
+| `a7f93a0` | 2026-07-15 | docs(readme): refresh for the post-review state. |
+| `a154ca4` | 2026-07-15 | docs(architecture): reflect runtime batches, OnceLock, interning, validate_pubkey. |
+| `bce8bef` | 2026-07-15 | docs(algorithms): update pseudocode for &'static [OffsetVariant] + runtime batch_size. |
+| `0ac6465` | 2026-07-15 | docs(config,cli,modules): BatchSize newtype, validate_pubkey, error variants. |
+| `db14f45` | 2026-07-15 | docs(overview,glossary,getting-started): MSRV 1.81, SearchMatch=[Scalar;2]. |
+| `ff4d432` | 2026-07-15 | docs(observability,security,testing,troubleshooting): OnceLock, miri CI, stale test names. |
+| `0ff7db8` | 2026-07-15 | docs(roadmap,release,faq): 0.2.0 next, MSRV bump, miri pre-release check. |
+| `aaa6e0d` | 2026-07-15 | docs(adr,opt-decisions): index ADR-0007/0008/0009 and opt-decision 0007. |
+| `07c2ab0` | 2026-07-16 | refactor: zero-alloc static strings, stack buffers, Display impls. |
+| `c67d6cd` | 2026-07-16 | style: fix import ordering for cargo fmt. |
+| `10009da` | 2026-07-16 | fix: remove target-cpu=native from .cargo/config.toml. |
+| `a1076b0` | 2026-07-16 | fix(ci): replace invalid --fail-fast 80 with --fail-under 80. |
+| `46220f7` | 2026-07-16 | ci: remove coverage job (tarpaulin too slow for CI). |
+| `603642a` | 2026-07-16 | perf: super-batch bootstrap chaining + stack arrays. |
+| `978cf15` | 2026-07-16 | fix(ci): add -Zmiri-disable-isolation for proptest getcwd. |
+| `ade4899` | 2026-07-16 | ci: remove miri job (not required for this project). |
+| `c43cc5d` | 2026-07-16 | docs: update CHANGELOG and performance.md for super-batch optimization. |
+| `2cadc73` | 2026-07-16 | perf(search): inline affine_x_bytes at both call sites, drop dead identity check. |
+| `65c309f` | 2026-07-16 | perf(search): defer batch_normalize across 4-batch groups. |
+| `b48a9fe` | 2026-07-16 | perf(search): apply deferred batch_normalize to precompute_chunk. |
+| `5034d57` | 2026-07-16 | perf(ecc): replace unsafe String::from_utf8_unchecked with safe variant. |
+| `ca13567` | 2026-07-16 | perf(search): drop x_bytes field from VariantIndex, save 16KB + 1 alloc/session. |
+| `e883c19` | 2026-07-16 | perf(search): sort by index in VariantIndex::new, skip pairs intermediate. |
+| `6d8c48d` | 2026-07-16 | perf(search): scalar_to_hex_trimmed byte-scan instead of str trim. |
+| `26dca01` | 2026-07-16 | bench: add random_scalar_sweep_lt_2_32 Criterion benchmark. |
+| `2a12285` | 2026-07-16 | docs: add optimization-decisions/0009 and update CHANGELOG. |
+| `dc75fff` | 2026-07-16 | perf(search): group-level early-exit flag in perform_chunked_sweep. |
+| `712f1b3` | 2026-07-16 | perf(search): size normalize group buffer to exact need, not 4*MAX_BATCH. |
+| `1674a6c` | 2026-07-16 | docs: add 0010 decision doc, update CHANGELOG with group early-exit. |
+| `77837a2` | 2026-07-17 | fix(search): drop orphan doc-comment block above perform_chunked_sweep. |
+| `4873ff4` | 2026-07-17 | refactor(search): drop dead hex_to_scalar_for_test helper, call ecc::hex_to_scalar directly. |
+| `ace3cc4` | 2026-07-17 | refactor(search)!: remove dead pub const BATCH_SIZE. |
+| `d39d56f` | 2026-07-17 | refactor(telemetry)!: rename install_rayon_panic_handler to install_worker_panic_handler. |
+| `59d3595` | 2026-07-17 | refactor(persistence)!: rename FileCacheWriter to BinaryCacheWriter. |
+| `ed8db05` | 2026-07-17 | refactor(search,persistence)!: rename sweep verbs (perform_*_sweep / precompute_chunk). |
+| `ea5b2ad` | 2026-07-17 | refactor(search)!: rename OffsetVariant.offset to offset_decimal and SearchMatch.small_scalar to j. |
+| `f0fb9b7` | 2026-07-17 | refactor(ecc): rename parameter hex_str to hex in parse_pubkey and hex_to_scalar. |
+| `99b7439` | 2026-07-17 | refactor(persistence)!: rename save_variants_to_json to write_variants_json. |
+| `04776e8` | 2026-07-17 | refactor(config)!: rename MIN_J to MIN_SEARCH_SCALAR and Config::validate to validate_fields. |
