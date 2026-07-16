@@ -85,16 +85,12 @@ use tracing::instrument;
 /// cost (32 × 96 bytes ≈ 3 KB) fits in L1 cache, and the cost of 32 scalar
 /// multiplications roughly balances one batch normalization.
 ///
+/// The runtime-controlling value is [`crate::config::DEFAULT_BATCH_SIZE`];
+/// the hot-path functions take `batch_size: u32` as a parameter, so this
+/// constant exists for documentation / benchmark use only.
+///
 /// See [ADR-0002](../docs/adr/0002-batch-normalization.md) for the full
 /// rationale.
-///
-/// # Examples
-///
-/// ```
-/// use find::search::BATCH_SIZE;
-/// assert_eq!(BATCH_SIZE, 32);
-/// ```
-pub const BATCH_SIZE: u64 = 32;
 
 /// Number of consecutive batches grouped together for a single Montgomery
 /// `batch_normalize` call. Larger groups amortize the single modular
