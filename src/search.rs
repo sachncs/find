@@ -824,6 +824,16 @@ pub fn perform_chunked_sweep(
         (num_batches - 1) / sb_size + 1
     };
 
+    // Shared early-exit flag. `find_map_any` already provides
+    // cancellation between super-batches, but the per-super-batch
+    // work is large (256 batches ≈ 0.9 ms). A group-level check
+    // lets a thread that finds the match in super-batch K cancel
+    // the remaining work in super-batches K+1, K+2, ... that are
+    // already in progress on other threads. The flag is set by
+    // the worker that finds the match via `Ordering::Release`; other
+    // workers observe it via `Ordering::Acquire` reads.
+    let found_flag = std::sync::atomic::AtomicBool::new(false);
+
     (0..num_sb).into_par_iter().find_map_any(|sb_idx| {
         let sb_start = sb_idx * sb_size;
         let sb_end = (sb_start + sb_size).min(num_batches);
@@ -851,6 +861,12 @@ pub fn perform_chunked_sweep(
 
         let mut bi = 0;
         while bi < sb_count {
+            // Fast-path early-exit: if another worker already found the
+            // match, abandon this super-batch immediately. The check is
+            // cheaper than the 0.9 ms we'd waste on a full super-batch.
+            if found_flag.load(std::sync::atomic::Ordering::Acquire) {
+                return None;
+            }
             let group_batch_count = (sb_count - bi).min(group_batches);
             let mut total_count = 0usize;
 
@@ -887,6 +903,9 @@ pub fn perform_chunked_sweep(
                     let mut x_bytes = [0u8; 32];
                     x_bytes.copy_from_slice(affine.x().as_ref());
                     if let Some(m) = index.match_x(&x_bytes, j) {
+                        // Signal other workers to abandon their super-batches
+                        // before the next per-batch boundary.
+                        found_flag.store(true, std::sync::atomic::Ordering::Release);
                         return Some(m);
                     }
                 }
