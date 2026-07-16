@@ -1034,72 +1034,93 @@ pub fn precompute_chunk<W: CacheWriter>(
             // `perform_chunked_sweep` for the full rationale.
             let base_j = start.saturating_add(sb_start * batch_size);
             let mut current = ecc::scalar_mul_g(&Scalar::from(base_j));
+            let g = ecc::generator();
 
-            for bi in 0..sb_count {
-                // Per-batch early-exit check within the super-batch.
+            // Process the super-batch in groups of `NORMALIZE_GROUP_BATCHES`
+            // consecutive batches so a single `batch_normalize` amortises
+            // the modular inversion across the whole group (see
+            // `perform_chunked_sweep` for the measured per-point savings).
+            let group_batches: u64 = NORMALIZE_GROUP_BATCHES as u64;
+            let mut group_points_buf = [ProjectivePoint::IDENTITY; 4 * MAX_BATCH];
+            let mut group_affines_buf = [AffinePoint::IDENTITY; 4 * MAX_BATCH];
+
+            let mut bi = 0;
+            while bi < sb_count {
                 if match_once.get().is_some() {
                     break;
                 }
+                let group_batch_count = (sb_count - bi).min(group_batches);
+                let mut total_count = 0usize;
 
-                let global_batch_idx = sb_start + bi;
-                let chunk_start = start.saturating_add(global_batch_idx * batch_size);
-                let chunk_end = (chunk_start.saturating_add(batch_size - 1)).min(end);
-                let count = (chunk_end.saturating_sub(chunk_start).saturating_add(1)) as usize;
-
-                // Stack-allocated batch buffers.
-                let mut points = [ProjectivePoint::IDENTITY; MAX_BATCH];
-                let mut affines = [AffinePoint::IDENTITY; MAX_BATCH];
-
-                // `+ G` increment chain: see ADR-0002.
-                let g = ecc::generator();
-                let p = &mut points[..count];
-                for slot in p.iter_mut() {
-                    *slot = current;
-                    current += g;
+                // Phase 1: generate all group points via the chained `+ G`.
+                for gbi in 0..group_batch_count {
+                    let abs_bi = bi + gbi;
+                    let chunk_start = start.saturating_add((sb_start + abs_bi) * batch_size);
+                    let chunk_end = (chunk_start.saturating_add(batch_size - 1)).min(end);
+                    let count = (chunk_end.saturating_sub(chunk_start).saturating_add(1)) as usize;
+                    for slot in &mut group_points_buf[total_count..total_count + count] {
+                        *slot = current;
+                        current += g;
+                    }
+                    total_count += count;
                 }
 
-                ProjectivePoint::batch_normalize(p, &mut affines[..count]);
+                // Phase 2: single batch_normalize.
+                ProjectivePoint::batch_normalize(
+                    &group_points_buf[..total_count],
+                    &mut group_affines_buf[..total_count],
+                );
 
-                // Stack-allocated block buffer (MAX_BATCH × 32 bytes).
-                let mut block = [0u8; MAX_BATCH * 32];
-                let mut block_len = 0usize;
-                let mut local_match = None;
+                // Phase 3: match each point and write per-batch blocks.
+                let mut offset = 0usize;
+                for gbi in 0..group_batch_count {
+                    if match_once.get().is_some() {
+                        bi = sb_count; // exit outer loop
+                        break;
+                    }
+                    let abs_bi = bi + gbi;
+                    let global_batch_idx = sb_start + abs_bi;
+                    let chunk_start = start.saturating_add(global_batch_idx * batch_size);
+                    let chunk_end = (chunk_start.saturating_add(batch_size - 1)).min(end);
+                    let count = (chunk_end.saturating_sub(chunk_start).saturating_add(1)) as usize;
 
-                for (i, affine) in affines[..count].iter().enumerate() {
-                    let j = chunk_start + i as u64;
-                    // Inlined affine_x_bytes: identity check removed because
-                    // `start.max(1)` (applied above) guarantees j ≥ 1, so
-                    // `j·G` is never the identity point.
-                    let mut x_bytes = [0u8; 32];
-                    x_bytes.copy_from_slice(affine.x().as_ref());
+                    let mut block = [0u8; MAX_BATCH * 32];
+                    let mut block_len = 0usize;
+                    let mut local_match = None;
 
-                    if let Some(idx_ref) = index {
-                        if let Some(m) = idx_ref.match_x(&x_bytes, j) {
-                            local_match = Some(m);
-                            break;
+                    for i in 0..count {
+                        let affine = &group_affines_buf[offset + i];
+                        let j = chunk_start + i as u64;
+                        let mut x_bytes = [0u8; 32];
+                        x_bytes.copy_from_slice(affine.x().as_ref());
+
+                        if let Some(idx_ref) = index {
+                            if let Some(m) = idx_ref.match_x(&x_bytes, j) {
+                                local_match = Some(m);
+                                break;
+                            }
                         }
+
+                        block[block_len..block_len + 32].copy_from_slice(&x_bytes);
+                        block_len += 32;
                     }
 
-                    block[block_len..block_len + 32].copy_from_slice(&x_bytes);
-                    block_len += 32;
+                    if let Some(m) = local_match {
+                        let _ = match_once.set(m);
+                        bi = sb_count; // exit outer loop
+                        break;
+                    }
+
+                    let offset_bytes = global_batch_idx * batch_size * 32;
+                    writer
+                        .write_block(offset_bytes, &block[..block_len])
+                        .map_err(FindError::Io)?;
+                    progress.add(count as u64);
+
+                    offset += count;
                 }
 
-                if let Some(m) = local_match {
-                    // `set` returns Err iff the value was already published by
-                    // another worker; either outcome is correct (we still
-                    // publish *our* match candidate via the existing slot or
-                    // we accept the winner). Discarding the Err is intentional.
-                    let _ = match_once.set(m);
-                    break;
-                }
-
-                // Cache-file byte offset for this batch's X-coordinates.
-                // batch_size scalars × 32 bytes per X-coordinate (SEC1 X-only).
-                let offset = global_batch_idx * batch_size * 32;
-                writer
-                    .write_block(offset, &block[..block_len])
-                    .map_err(FindError::Io)?;
-                progress.add(count as u64);
+                bi += group_batch_count;
             }
             Ok(())
         })?;
@@ -1112,14 +1133,6 @@ pub fn precompute_chunk<W: CacheWriter>(
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/// Extracts the 32-byte big-endian X-coordinate from an affine point.
-///
-/// Returns `None` if the point is the point-at-infinity.
-///
-/// Uses [`AffineCoordinates::x`] directly to avoid the `to_encoded_point`
-/// round-trip — saves one SEC1 prefix-byte computation per point in the
-/// hot loop. The `AffineCoordinates` trait is re-exported from
 /// Converts a scalar to a lower-case hex string with leading zeros removed.
 ///
 /// The value zero is rendered as `"0"`. Uses a stack-allocated `[u8; 64]`
