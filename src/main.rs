@@ -143,7 +143,7 @@ fn render_success_report(m: find::search::SearchMatch, total_time: std::time::Du
     use std::fmt::Write;
     let _ = writeln!(out, "MATCH DISCOVERED (Variant: {})", m.label);
     let _ = writeln!(out, "Shift scalar V: {}", m.offset);
-    let _ = writeln!(out, "Search scalar j: {}", m.small_scalar);
+    let _ = writeln!(out, "Search scalar j: {}", m.j);
     out.push_str("Target candidates (d = V +/- j):\n");
     let candidates_hex = m.candidates_hex();
     for (i, c) in candidates_hex.iter().enumerate() {

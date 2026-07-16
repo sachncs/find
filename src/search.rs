@@ -168,7 +168,7 @@ pub struct OffsetVariant {
     ///
     /// This is preserved for display and serialization; the reduced value
     /// used during arithmetic is `v_scalar`.
-    pub offset: &'static str,
+    pub offset_decimal: &'static str,
 }
 
 /// Cache-optimized lookup index for variant matching.
@@ -283,8 +283,8 @@ impl VariantIndex {
 
         Some(SearchMatch {
             label: var.label,
-            offset: var.offset,
-            small_scalar: j,
+            offset: var.offset_decimal,
+            j,
             candidates: [var.v_scalar.add(&j_scalar), var.v_scalar.sub(&j_scalar)],
         })
     }
@@ -332,7 +332,7 @@ pub struct SearchMatch {
     /// The decimal string representation of the variant's unreduced offset.
     pub offset: &'static str,
     /// The scalar \(j\) at which the match occurred.
-    pub small_scalar: u64,
+    pub j: u64,
     /// Candidate private keys `[V + j, V - j] (mod n)` as [`Scalar`].
     ///
     /// Two-element array by construction.
@@ -358,19 +358,19 @@ impl SearchMatch {
     ///     2,
     ///     [Scalar::from(3u64), Scalar::from(2u64)],
     /// );
-    /// assert_eq!(m.small_scalar, 2);
+    /// assert_eq!(m.j, 2);
     /// assert_eq!(m.label, "2^0");
     /// ```
     pub fn new(
         label: &'static str,
         offset: &'static str,
-        small_scalar: u64,
+        j: u64,
         candidates: [Scalar; 2],
     ) -> Self {
         Self {
             label,
             offset,
-            small_scalar,
+            j,
             candidates,
         }
     }
@@ -517,7 +517,7 @@ impl Progress {
 
 impl std::fmt::Display for OffsetVariant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} (V={})", self.label, self.offset)
+        write!(f, "{} (V={})", self.label, self.offset_decimal)
     }
 }
 
@@ -526,7 +526,7 @@ impl std::fmt::Display for SearchMatch {
         write!(
             f,
             "variant={} offset={} j={}",
-            self.label, self.offset, self.small_scalar
+            self.label, self.offset, self.j
         )
     }
 }
@@ -683,7 +683,7 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
         Box::new(std::array::from_fn(|_| OffsetVariant {
             label: "",
             v_scalar: Scalar::ZERO,
-            offset: "",
+            offset_decimal: "",
         }));
 
     // Powers-of-two pass: V = 2^i for i in 0..256.
@@ -693,7 +693,7 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
         out[i] = OffsetVariant {
             label: Box::leak(format!("2^{i}").into_boxed_str()),
             v_scalar: scalar,
-            offset: Box::leak(u256_to_decimal(&pow).into_boxed_str()),
+            offset_decimal: Box::leak(u256_to_decimal(&pow).into_boxed_str()),
         };
         pow <<= 1;
     }
@@ -706,7 +706,7 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
         out[256 + i] = OffsetVariant {
             label: Box::leak(format!("sum(2^0..2^{i})").into_boxed_str()),
             v_scalar: scalar,
-            offset: Box::leak(u256_to_decimal(&cum).into_boxed_str()),
+            offset_decimal: Box::leak(u256_to_decimal(&cum).into_boxed_str()),
         };
         cum = (cum << 1) | U256::ONE;
     }
@@ -1256,9 +1256,9 @@ mod tests {
 
         // Verify the deterministic metadata for known indices.
         assert_eq!(variants[0].label, "2^0");
-        assert_eq!(variants[0].offset, "1");
+        assert_eq!(variants[0].offset_decimal, "1");
         assert_eq!(variants[256].label, "sum(2^0..2^0)");
-        assert_eq!(variants[256].offset, "1");
+        assert_eq!(variants[256].offset_decimal, "1");
     }
 
     /// Verifies that [`Progress`] counts additions correctly under concurrency.
@@ -1366,7 +1366,7 @@ mod tests {
             "Candidates must include d=3, got: {:?} (found via {} at j={})",
             m.candidates,
             m.label,
-            m.small_scalar
+            m.j
         );
     }
 

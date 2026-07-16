@@ -500,7 +500,7 @@ pub fn save_variants_to_json(
     let mut map = BTreeMap::new();
     for (var, xb) in variants.iter().zip(x_bytes.iter()) {
         let x_hex = hex::encode(xb);
-        map.insert(x_hex, var.offset.to_string());
+        map.insert(x_hex, var.offset_decimal.to_string());
     }
 
     let json = serde_json::to_string_pretty(&map).map_err(FindError::SerializationError)?;
@@ -596,7 +596,7 @@ mod tests {
         let result = sweep_cached(&index, &cache_path, 1).unwrap();
         let m = result.expect("Should have found a match at j=1");
 
-        assert_eq!(m.small_scalar, 1, "Should match at j=1");
+        assert_eq!(m.j, 1, "Should match at j=1");
         assert!(
             m.candidates.contains(&Scalar::from(3u64)),
             "Candidate must include d=3, got: {:?}",

@@ -62,7 +62,7 @@ fn test_orchestrator_finds_small_scalar() {
         "Candidates must include d=5, got: {:?} (found via {} at j={} after {:?})",
         m.candidates,
         m.label,
-        m.small_scalar,
+        m.j,
         elapsed
     );
 }

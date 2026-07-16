@@ -45,7 +45,7 @@ fn test_rigorous_recovery_1234567890() {
 
     assert_eq!(m.label, "2^30", "Must match via the 2^30 variant");
     assert_eq!(
-        m.small_scalar, 160_826_066,
+        m.j, 160_826_066,
         "Must match at j = d - 2^30 = 160826066"
     );
     assert_eq!(m.offset, "1073741824", "Offset must be 2^30");
@@ -88,7 +88,7 @@ fn test_rigorous_recovery_1234567890() {
 
     println!("[RECOVERY VERIFIED] Scalar 1234567890 fully recovered from its public key.");
     println!("  Variant: {}", m.label);
-    println!("  Match at j = {}", m.small_scalar);
+    println!("  Match at j = {}", m.j);
     println!("  Offset V = {}", m.offset);
     println!("  Candidates: {:?}", m.candidates);
 }
@@ -144,7 +144,7 @@ fn test_recovery_small_scalars() {
 
         println!(
             "[RECOVERY] d={} found via {} at j={}",
-            known_d, m.label, m.small_scalar
+            known_d, m.label, m.j
         );
     }
 }
