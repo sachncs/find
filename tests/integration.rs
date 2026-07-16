@@ -163,14 +163,15 @@ proptest! {
         /// Property: precompute_chunk finds d and writes to the cache writer.
     ///
     /// Sweeps `[1, d + 64]`. precompute_chunk finds the match (Some)
-    /// inside the first batch and skips writing that batch (early-exit
-    /// semantics). The second batch onwards writes its 32-entry blocks
-    /// to the cache. The cache write path is exercised for `>= 1` batch.
-    ///
-    /// We assert:
+    /// and returns early. We assert:
     /// 1. precompute_chunk returns Some(m) with d in m.candidates.
-    /// 2. The cache writer received at least 32 bytes (one full batch).
-    /// 3. The progress counter advanced to at least 32.
+    /// 2. If the match is not in the very first batch (j >= 32), the
+    ///    cache writer received at least one full batch.
+    ///
+    /// The cache-write assertion is conditional because the
+    /// super-batch optimization (one bootstrap per 256 batches) means
+    /// that a match in the very first batch of the first super-batch
+    /// skips all cache writes — no race with parallel batches anymore.
     #[test]
     fn prop_precompute_chunk_roundtrip(d in 2u64..10_000u64) {
     use find::search::{generate_variants, precompute_chunk, Progress, VariantIndex, CacheWriter};
@@ -201,18 +202,16 @@ proptest! {
         m.candidates
     );
 
-    // The cache writer must have received at least one full batch
-    // (the batch after the early-exit batch).
-    let cache_bytes = writer.0.lock().unwrap().clone();
-    prop_assert!(
-        cache_bytes.len() >= 32,
-        "cache must have at least one full batch; got {} bytes",
-        cache_bytes.len()
-    );
-
-    // Progress counter is non-decreasing but the early-exit path
-    // (match found in the very first batch) leaves it at 0. We only
-    // assert the cache write path was exercised.
+    // If the match is not in the very first batch, at least one batch
+    // must have been written to the cache before the early-exit.
+    if m.small_scalar >= 32 {
+        let cache_bytes = writer.0.lock().unwrap().clone();
+        prop_assert!(
+            cache_bytes.len() >= 32,
+            "cache must have at least one full batch when match j >= 32; got {} bytes",
+            cache_bytes.len()
+        );
+    }
 }
 }
 
