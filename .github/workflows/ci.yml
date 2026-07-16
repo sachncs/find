@@ -54,6 +54,10 @@ jobs:
       - name: Run miri on the whole workspace
         # Required-for-merge: any miri failure fails the build. See
         # CONTRIBUTING.md (\"Unsafe-code changes must pass miri\").
+        # `-Zmiri-disable-isolation` lets proptest use `getcwd` for
+        # failure-persistence, which isolation forbids.
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
         run: cargo +nightly miri test --workspace --all-features
 
   test:
