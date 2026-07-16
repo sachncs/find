@@ -33,7 +33,7 @@
 use clap::Parser;
 use find::config::Config;
 use find::orchestrator;
-use find::telemetry::{init_tracing, install_rayon_panic_handler};
+use find::telemetry::{init_tracing, install_worker_panic_handler};
 use std::time::Instant;
 use tracing::{info, info_span};
 
@@ -97,7 +97,7 @@ struct Args {
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    install_rayon_panic_handler();
+    install_worker_panic_handler();
     let _guard = init_tracing(&args.log_dir)?;
 
     let main_span = info_span!("main_execution");

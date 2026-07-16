@@ -5,7 +5,7 @@
 //! Tracing initialization for the `find` tool.
 //!
 //! This module owns the [`init_tracing`] function and the
-//! [`install_rayon_panic_handler`] function. They are isolated here so that
+//! [`install_worker_panic_handler`] function. They are isolated here so that
 //! the same observability setup can be used by tests and external consumers.
 //!
 //! # Global state
@@ -27,7 +27,7 @@
 //!
 //! - [`init_tracing`] is idempotent only in the sense that a second call
 //!   will panic (see Global state above).
-//! - [`install_rayon_panic_handler`] uses Rayon's
+//! - [`install_worker_panic_handler`] uses Rayon's
 //!   [`rayon::ThreadPoolBuilder::build_global`], which is itself
 //!   idempotent — a second call is a no-op.
 //!
@@ -35,7 +35,7 @@
 //!
 //! ```text
 //! main()
-//!   ├── install_rayon_panic_handler()      # optional but recommended
+//!   ├── install_worker_panic_handler()      # optional but recommended
 //!   ├── let _guard = init_tracing("logs")?  # keep _guard alive
 //!   ├── run application logic
 //!   └── _guard drops on exit -> log flush
@@ -116,14 +116,14 @@ pub fn init_tracing<P: AsRef<Path>>(
 /// # Examples
 ///
 /// ```no_run
-/// use find::telemetry::install_rayon_panic_handler;
+/// use find::telemetry::install_worker_panic_handler;
 ///
 /// fn main() {
-///     install_rayon_panic_handler();
+///     install_worker_panic_handler();
 ///     // ... application logic ...
 /// }
 /// ```
-pub fn install_rayon_panic_handler() {
+pub fn install_worker_panic_handler() {
     let _ = rayon::ThreadPoolBuilder::new()
         .panic_handler(|info| {
             // Rayon hands us a `Box<dyn Any + Send>`. The most common
@@ -176,12 +176,12 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    /// Smoke test: ensure `install_rayon_panic_handler` does not panic.
+    /// Smoke test: ensure `install_worker_panic_handler` does not panic.
     #[test]
-    fn test_install_rayon_panic_handler_smoke() {
+    fn test_install_worker_panic_handler_smoke() {
         // The global pool may already be initialized, so we just verify the
         // function does not panic.
-        install_rayon_panic_handler();
+        install_worker_panic_handler();
     }
 
     /// Verifies that the `read` import is used (compile-time check).
