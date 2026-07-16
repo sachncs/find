@@ -1124,13 +1124,18 @@ fn scalar_to_hex_trimmed(s: &Scalar) -> String {
     let mut buf = [0u8; 64];
     hex::encode_to_slice(bytes, &mut buf)
         .expect("64-byte buffer is always sufficient for 32-byte input");
-    let trimmed = std::str::from_utf8(&buf)
-        .expect("hex encoding is always valid UTF-8")
-        .trim_start_matches('0');
-    if trimmed.is_empty() {
+    // Find the first non-zero byte instead of `trim_start_matches('0')`
+    // which constructs a `&str` slice and then iterates. The byte scan
+    // avoids the intermediate `str` and the `chars()` iteration in
+    // `trim_start_matches`.
+    let start = buf.iter().position(|&b| b != b'0').unwrap_or(buf.len());
+    if start == buf.len() {
         "0".to_string()
     } else {
-        trimmed.to_string()
+        // Safe: hex encoding is always valid UTF-8.
+        std::str::from_utf8(&buf[start..])
+            .expect("hex encoding is valid UTF-8")
+            .to_string()
     }
 }
 
