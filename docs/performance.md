@@ -73,14 +73,40 @@ The choice of a flat array over a `HashMap` or `BTreeMap` is a deliberate perfor
 
 The system uses `rayon`'s `into_par_iter().find_map_any()` for work-stealing parallelism:
 
-- Range `[start, end]` is divided into batches of 32 scalars.
-- Each worker processes one batch: scalar multiplication → batch normalization → binary search.
+- Range `[start, end]` is divided into **super-batches of 256 batches** (8 192 scalars at the default `BATCH_SIZE = 32`).
+- Each Rayon task processes one super-batch sequentially:
+  - One bootstrap scalar multiplication at the super-batch's first scalar.
+  - For each of the 256 batches: chain `current += G` 31 times → batch-normalize → binary-search lookup.
+  - Between batches within the super-batch: `current` carries over (one mixed addition per inter-batch step replaces a full scalar mul).
 - `find_map_any` provides early-exit on first match — the first thread to find a hit terminates the entire search.
 - The `VariantIndex` reference is shared immutably across all workers (no locks required; the index is read-only after construction).
+- For a 1 B-scalar sweep at `BATCH_SIZE = 32`: ~122 K Rayon tasks, well above typical core counts, so work-stealing saturates all cores.
 
-The global `Progress` atomic counter accumulates across batch boundaries, allowing progress reporting across multiple cache chunks.
+The global `Progress` atomic counter accumulates across batch boundaries, allowing progress reporting across multiple cache chunks. Within a super-batch the counter is updated batch-by-batch (same granularity as before).
 
 The custom Rayon panic handler in [`src/main.rs::main`](../src/main.rs) logs panics rather than aborting the process; see [observability.md#rayon-panic-handling](observability.md#rayon-panic-handling).
+
+### Measured parallel scaling
+
+End-to-end sweep for `d = 999 999 937` (match at `j ≈ 73.7 M`) on a 12-core machine:
+
+| Threads | Wall-clock | Speedup vs 1 thread |
+|---|---|---|
+| 1  | ~32.6 s | 1.0× |
+| 2  | ~33.3 s | 0.98× |
+| 4  | ~34.0 s | 0.96× |
+| 8  | ~14.3 s | 2.3× |
+| 12 | ~8.0 s  | 4.1× |
+
+The sub-linear scaling (4.1× on 12 cores) is inherent to the early-exit
+search model: once any worker reaches `j ≈ 73.7 M`, all others stop.
+With 12 workers each only needs to process ~6 M scalars before one
+finds the match, but the per-batch fixed costs (bootstrap,
+normalization) limit the theoretical max. For a full sweep (no early
+exit) the scaling is approximately linear up to the physical core
+count. See
+[optimization-decisions/0008-super-batch-chaining.md](optimization-decisions/0008-super-batch-chaining.md)
+for the design rationale.
 
 ## Tuning the runtime environment
 
@@ -91,7 +117,7 @@ The custom Rayon panic handler in [`src/main.rs::main`](../src/main.rs) logs pan
 
 ### Memory
 
-- The search engine's heap usage is dominated by the `VariantIndex` (~16 KB) and the orchestrator's stack-allocated batch arrays (~3 KB per worker).
+- The search engine's heap usage is dominated by the `VariantIndex` (~16 KB). Batch buffers are stack-allocated inside each Rayon task: `[ProjectivePoint; 256]` + `[AffinePoint; 256]` + `[u8; 8192]` = ~48 KB per worker. No per-batch heap allocation occurs.
 - The binary cache file is memory-mapped by the kernel; no explicit user-space memory is required.
 - No `jemalloc` or `tcmalloc` is configured. The system allocator is sufficient for the working set.
 
@@ -122,17 +148,47 @@ The following are common performance anti-patterns that the tool's design avoids
 
 The hot loop in `precompute_chunk` / `perform_chunked_sweep` spends its cycles across five distinct operations:
 
+### Per-super-batch cost (default `BATCH_SIZE = 32`, `SUPER_BATCHES = 256`)
+
+| Operation | Per-super-batch cost | Notes |
+|---|---|---|
+| `scalar_mul_g(base_j)` (bootstrap) | ~30 µs | **One per super-batch** (not per batch) — chained across batches |
+| `current += generator()` (intra-batch `+G`) | ~1.1 µs × 31 × 256 = ~8 704 µs | Inside each batch |
+| `current += G` (inter-batch `+G`) | ~1.1 µs × 255 = ~280 µs | Between batches in the super-batch |
+| `batch_normalize(&points[..count])` | ~7.3 µs × 256 = ~1 869 µs | Montgomery, per batch |
+| `affine_x_bytes(affine)` | <1 µs | Direct `AffineCoordinates::x()` |
+| `index.match_x(&x_bytes, j)` | ~12 ns × 32 × 256 = ~98 µs | Binary search in 16 KiB keys array |
+
+**Total per super-batch: ~10 950 µs for 8 192 scalars ≈ 1.34 µs/scalar.**
+
+Before super-batch chaining each batch had its own bootstrap (~30 µs):
+31.25 M batches × (30 µs bootstrap + ~34 µs chain + ~7.3 µs normalize +
+~0.4 µs lookup) ≈ 2 240 µs per batch × 31.25 M batches. The bootstrap
+accounted for ~42 % of per-batch wall time (not ~80 % as previously
+estimated). The `+G` chain and normalization together dominated the
+remaining ~58 %.
+
+Super-batch chaining amortizes the bootstrap to **one per 256 batches**
+(~0.12 µs/scalar vs. ~0.94 µs/scalar before), reducing the bootstrap
+contribution to ~2.7 % of per-scalar cost. The chain is now the
+bottleneck. See
+[optimization-decisions/0008-super-batch-chaining.md](optimization-decisions/0008-super-batch-chaining.md)
+for the full rationale and alternatives considered.
+
+### Per-batch cost breakdown (within a super-batch)
+
 | Operation | Per-batch cost | Notes |
 |---|---|---|
-| `scalar_mul_g(chunk_start)` (bootstrap) | ~256 field mults | One per batch |
-| `current += generator()` (`+G` chain) | ~12 field mults | `count - 1` per batch |
+| `current += generator()` (`+G` chain) | ~1.1 µs × 31 = ~34 µs | `count - 1` per batch |
 | `batch_normalize(&points[..count])` | 1 inversion + ~6·count mults | Montgomery |
-| `affine_x_bytes(affine)` | ~1 µs | Direct `AffineCoordinates::x()` |
-| `index.match_x(&x_bytes, j)` | ~10 ns | Binary search in 16 KiB keys array |
+| `affine_x_bytes(affine)` | <1 µs | Direct `AffineCoordinates::x()` |
+| `index.match_x(&x_bytes, j)` | ~12 ns × 32 | Binary search in 16 KiB keys array |
+| **Bootstrap** | **0 µs** | Provided by the super-batch's single bootstrap + inter-batch chain |
 
-The dominant cost is the **bootstrap scalar multiplication** in step 1, not the `+G` chain. For a typical 32-point batch the bootstrap takes ~80% of the time; the chain + normalize + match together take the remaining 20%. This means increasing `BATCH_SIZE` beyond ~64 has diminishing returns — the per-batch cost is dominated by the single bootstrap mul, not by the per-point chain.
-
-The batch-size choice now trades against per-batch allocation cost (heap-allocated `Vec<ProjectivePoint>` / `Vec<AffinePoint>` / `Vec<u8>` arrays track the runtime `Config::batch_size`); see [ADR-0009](adr/0009-runtime-batch-size.md).
+The batch-size choice now trades against per-batch stack usage (fixed
+`[ProjectivePoint; MAX_BATCH_SIZE]` arrays sized at compile time). The
+heap-vs-stack decision moved to super-batch granularity; see
+[ADR-0009](adr/0009-runtime-batch-size.md).
 
 ## Optimization decisions
 
@@ -145,6 +201,7 @@ See [optimization-decisions/](optimization-decisions/) for the rationale behind 
 - `0005-cached-sweep-stack-buffer.md` — `perform_cached_sweep` over a 32 KiB stack scratch buffer
 - `0006-u256-decimal-no-biguint.md` — direct 256-bit divmod-by-10 instead of `BigUint::to_string`
 - `0007-oncelock-early-exit.md` — replacing `Mutex + AtomicBool` with a single `OnceLock<SearchMatch>`
+- `0008-super-batch-chaining.md` — chaining the bootstrap scalar multiplication across 256 consecutive batches via the `+ G` chain, eliminating ~99.6 % of bootstrap muls
 
 ## Profiling
 

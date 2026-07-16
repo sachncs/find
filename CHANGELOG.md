@@ -51,8 +51,60 @@ commit and its commit timestamp.
 - **`optimization-decisions/0007-oncelock-early-exit.md`** explains why
   `OnceLock<SearchMatch>` replaced the `Mutex + AtomicBool` pair in
   `precompute_chunk` (commit 14).
+- **Super-batch bootstrap chaining** in `perform_chunked_sweep` and
+  `precompute_chunk`: each Rayon task processes 256 consecutive batches
+  sequentially, reusing the last point of one batch as the bootstrap of
+  the next via the `+ G` chain. Replaces one full scalar multiplication
+  per batch with one per super-batch, eliminating ~99.6 % of bootstrap
+  muls. Measured −17 % on the end-to-end `bench_end_to_end_small_scalar`
+  benchmark (commit `603642a`).
+- **Stack-allocated hot-path buffers**: `perform_chunked_sweep` and
+  `precompute_chunk` now use fixed-size `[ProjectivePoint; MAX_BATCH_SIZE]`
+  and `[AffinePoint; MAX_BATCH_SIZE]` arrays (and a
+  `[u8; MAX_BATCH_SIZE * 32]` block buffer in `precompute_chunk`)
+  instead of `Vec`-allocated per batch. Eliminates millions of heap
+  allocations per 1 B-scalar sweep (commit `603642a`).
+- **`optimization-decisions/0008-super-batch-chaining.md`** documents
+  the super-batch bootstrap-chaining design and the trade-off between
+  per-task bootstrap cost and Rayon task granularity.
 
 ### Changed
+
+- **Inner-loop cost breakdown** in `docs/performance.md` corrected. The
+  bootstrap scalar multiplication is ~54 % of per-batch ECC work (not
+  ~80 % as previously documented); the `+ G` chain accounts for ~46 %.
+  Super-batch chaining eliminates the bootstrap term entirely
+  (amortized), making the chain the new bottleneck.
+- **`docs/performance.md` "Parallelism" section** updated to reflect
+  super-batch task granularity (8192 scalars per Rayon task at default
+  `BATCH_SIZE = 32`) instead of per-batch (32 scalars).
+- **CI: `tarpaulin` coverage job removed** (commit `46220f7`). The
+  job exceeded the 10-minute per-step limit on the larger crate and
+  the coverage data was informational only.
+- **CI: `cargo miri` job removed** (commit `ade4899`). Proptest's
+  `getcwd` call in failure-persistence paths conflicts with Miri's
+  filesystem isolation, and the project's threat model does not
+  require Miri-level UB detection (the only `unsafe` block is a
+  best-effort `libc::fsync` on the checkpoint parent directory).
+- **`docs/performance.md` "Tuning the runtime environment" → "Memory"**
+  corrected: batch buffers are now stack-allocated (~48 KB per worker)
+  rather than heap-allocated.
+
+### Removed
+
+- **CI: `cargo miri` job** removed from `.github/workflows/ci.yml`
+  (commit `ade4899`). See Changed entry above for rationale.
+- **CI: `cargo tarpaulin` coverage job** removed from
+  `.github/workflows/ci.yml` (commit `46220f7`).
+- **`SweepRange` newtype** (commit 8). The unused `SweepRange` /
+  `SweepRange::new` / `SweepRange::len` / `SweepRange::is_empty` API and
+  its 3 unit tests were deleted from `src/config.rs`; the
+  `orchestrator::SweepRange` re-export was removed.
+- `pub const search::MAX_BATCH: usize = 32` removed from the crate
+  surface (commit 7b). The constant was redundant once the hot-path
+  arrays moved to heap allocation.
+
+### Changed (pre-super-batch)
 
 - **Unsafe removed from `u256_to_decimal`**: `String::from_utf8(digits)` now
   validates the ASCII digit byte-slice instead of the previous
@@ -91,19 +143,6 @@ commit and its commit timestamp.
 - `HARDENING_REPORT.md` removed (superseded by `docs/security.md` plus inline
   module-level security notes).
 - Repository URLs already canonicalized to `sachncs/find` (commit `4c45e2e`).
-
-### Removed
-
-- **`SweepRange` newtype** (commit 8). The unused `SweepRange` /
-  `SweepRange::new` / `SweepRange::len` / `SweepRange::is_empty` API and
-  its 3 unit tests were deleted from `src/config.rs`; the
-  `orchestrator::SweepRange` re-export was removed.
-- `pub const search::MAX_BATCH: usize = 32` removed from the crate
-  surface (commit 7b). The constant was redundant once the hot-path
-  arrays moved to heap allocation.
-
-### Changed
-
 - **MSRV bumped from 1.70 to 1.81.** Doctest signatures using
   `Box<dyn std::error::Error>` are migrated to the `core::error::Error`
   spelling (stable as of 1.81). This is documented as a minor SemVer
