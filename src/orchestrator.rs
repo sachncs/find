@@ -195,7 +195,7 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
             persistence::perform_cached_sweep(&index, &cache_path, chunk_start)?
         } else if config.cache_points {
             info!("Cache miss. Precomputing chunk...");
-            let writer = persistence::FileCacheWriter::create(&cache_path)?;
+            let writer = persistence::BinaryCacheWriter::create(&cache_path)?;
             let expected_len = (chunk_end.saturating_sub(chunk_start).saturating_add(1)) * 32;
             writer.preallocate(expected_len)?;
 

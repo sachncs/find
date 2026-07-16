@@ -6,7 +6,7 @@
 //!
 //! All I/O side effects are isolated here so that `search` remains a pure
 //! domain module. Consumers should use [`Checkpoint`] for durable progress
-//! and [`FileCacheWriter`] for binary cache generation.
+//! and [`BinaryCacheWriter`] for binary cache generation.
 //!
 //! # Responsibilities
 //!
@@ -14,7 +14,7 @@
 //!   written via write-then-rename, with an integrity anchor (X-coordinate
 //!   of `last_j · G`) that allows [`Checkpoint::verify`] to detect
 //!   corruption. See [ADR-0003](../docs/adr/0003-atomic-checkpointing.md).
-//! - **Binary caches** ([`FileCacheWriter`]): 32-byte X-coordinate blocks
+//! - **Binary caches** ([`BinaryCacheWriter`]): 32-byte X-coordinate blocks
 //!   appended to per-chunk files. See
 //!   [ADR-0006](../docs/adr/0006-binary-cache-format.md).
 //! - **JSON exports** ([`save_variants_to_json`]): a deterministic
@@ -22,7 +22,7 @@
 //!
 //! # Concurrency
 //!
-//! - [`FileCacheWriter`] guards its inner [`File`] with a
+//! - [`BinaryCacheWriter`] guards its inner [`File`] with a
 //!   [`std::sync::Mutex`]. The mutex is uncontended in the typical case
 //!   because each write is a single batch of ~1 KiB. Mutex poisoning
 //!   surfaces as a panic from the holding thread; we deliberately abort
@@ -33,7 +33,7 @@
 //!
 //! # Platform behaviour
 //!
-//! On Unix, [`FileCacheWriter::write_block`] uses `pwrite_at` (positional
+//! On Unix, [`BinaryCacheWriter::write_block`] uses `pwrite_at` (positional
 //! write), allowing arbitrary offsets without seeking. On other platforms
 //! it falls back to a mutex-protected `seek + write_all` pair. The fallback
 //! still satisfies [`CacheWriter`]'s contract.
@@ -241,7 +241,7 @@ impl Checkpoint {
 ///
 /// Each entry in the cache is a raw 32-byte big-endian X-coordinate. The file
 /// is created on first use and may be pre-allocated with
-/// [`FileCacheWriter::preallocate`] to reduce fragmentation.
+/// [`BinaryCacheWriter::preallocate`] to reduce fragmentation.
 ///
 /// See [ADR-0006](../docs/adr/0006-binary-cache-format.md) for the
 /// on-disk format, pre-allocation strategy, and EOF-validity rules.
@@ -253,16 +253,16 @@ impl Checkpoint {
 ///
 /// # Thread safety
 ///
-/// `FileCacheWriter` is `Send + Sync`: the inner [`File`] is wrapped in a
+/// `BinaryCacheWriter` is `Send + Sync`: the inner [`File`] is wrapped in a
 /// [`std::sync::Mutex`] that serialises writes. Concurrent [`CacheWriter`]
-/// implementations may be created by sharing a `FileCacheWriter` via
-/// `Arc<FileCacheWriter>` or by passing it directly to
+/// implementations may be created by sharing a `BinaryCacheWriter` via
+/// `Arc<BinaryCacheWriter>` or by passing it directly to
 /// [`crate::search::precompute_chunk`].
-pub struct FileCacheWriter {
+pub struct BinaryCacheWriter {
     file: std::sync::Mutex<File>,
 }
 
-impl FileCacheWriter {
+impl BinaryCacheWriter {
     /// Creates a new cache file, creating parent directories as needed.
     ///
     /// # Errors
@@ -273,11 +273,11 @@ impl FileCacheWriter {
     /// # Examples
     ///
     /// ```no_run
-    /// use find::persistence::FileCacheWriter;
+    /// use find::persistence::BinaryCacheWriter;
     /// use std::path::Path;
     ///
     /// fn main() -> Result<(), Box<dyn core::error::Error>> {
-    ///     let writer = FileCacheWriter::create(Path::new("data/chunk_1.bin"))?;
+    ///     let writer = BinaryCacheWriter::create(Path::new("data/chunk_1.bin"))?;
     ///     let block = [0u8; 32 * 32]; // one batch of 32 X-coordinates
     ///     find::search::CacheWriter::write_block(&writer, 0, &block)?;
     ///     Ok(())
@@ -321,7 +321,7 @@ impl FileCacheWriter {
     }
 }
 
-impl CacheWriter for FileCacheWriter {
+impl CacheWriter for BinaryCacheWriter {
     /// Writes a block of 32-byte X-coordinate entries at `offset`.
     ///
     /// # Performance
@@ -667,12 +667,12 @@ mod tests {
             .contains("mismatch"));
     }
 
-    /// Verifies that [`FileCacheWriter::create`] makes parent directories.
+    /// Verifies that [`BinaryCacheWriter::create`] makes parent directories.
     #[test]
     fn test_file_cache_writer_create() {
         let dir = tempdir().unwrap();
         let nested = dir.path().join("a/b/cache.bin");
-        let writer = FileCacheWriter::create(&nested).unwrap();
+        let writer = BinaryCacheWriter::create(&nested).unwrap();
         assert!(nested.exists());
         let meta = std::fs::metadata(&nested).unwrap();
         assert!(meta.is_file());
@@ -681,12 +681,12 @@ mod tests {
         assert_eq!(std::fs::metadata(&nested).unwrap().len(), 64);
     }
 
-    /// Verifies that [`FileCacheWriter`] can write blocks and read them back.
+    /// Verifies that [`BinaryCacheWriter`] can write blocks and read them back.
     #[test]
     fn test_file_cache_writer_write_and_read_back() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("cache.bin");
-        let writer = FileCacheWriter::create(&path).unwrap();
+        let writer = BinaryCacheWriter::create(&path).unwrap();
 
         let data = b"0123456789abcdef0123456789abcdef";
         writer.write_block(0, data).unwrap();

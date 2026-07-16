@@ -83,7 +83,7 @@
 //!   ([`search::VariantIndex`], [`search::OffsetVariant`], [`config::Config`]),
 //! - or explicitly synchronised via atomics or mutexes
 //!   ([`search::Progress`] uses [`AtomicU64`]; [`search::CacheWriter`]
-//!   requires `Send + Sync`; [`persistence::FileCacheWriter`] guards its
+//!   requires `Send + Sync`; [`persistence::BinaryCacheWriter`] guards its
 //!   file handle with a [`std::sync::Mutex`]).
 //!
 //! The orchestrator entry point [`orchestrator::run`] is safe to call from a
