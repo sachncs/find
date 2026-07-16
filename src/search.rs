@@ -1482,21 +1482,9 @@ mod tests {
             // Pad with leading zeros to 64 hex chars.
             let padded = format!("{hex_str:0>64}");
             let bytes = hex::decode(&padded).expect("hex must decode");
-            let recovered = hex_to_scalar_for_test(&padded).expect("must parse");
+            let recovered = crate::ecc::hex_to_scalar(&padded).expect("must parse");
             proptest::prop_assert_eq!(recovered, s, "Roundtrip must preserve scalar value");
             let _ = bytes; // silence unused warning
         }
-    }
-
-    /// Helper for `prop_scalar_to_hex_trimmed_inverts` — re-implements
-    /// `hex_to_scalar` to avoid a cross-module dependency in the test.
-    fn hex_to_scalar_for_test(hex_str: &str) -> Option<Scalar> {
-        use k256::elliptic_curve::PrimeField;
-        let bytes = hex::decode(hex_str).ok()?;
-        let mut fixed_bytes = [0u8; 32];
-        let len = bytes.len().min(32);
-        let src = &bytes[..len];
-        fixed_bytes[32 - src.len()..].copy_from_slice(src);
-        Option::from(Scalar::from_repr(fixed_bytes.into()))
     }
 }
