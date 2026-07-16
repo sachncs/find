@@ -67,6 +67,67 @@ commit and its commit timestamp.
 - **`optimization-decisions/0008-super-batch-chaining.md`** documents
   the super-batch bootstrap-chaining design and the trade-off between
   per-task bootstrap cost and Rayon task granularity.
+- **Deferred `batch_normalize` across 4-batch groups** in
+  `perform_chunked_sweep` and `precompute_chunk`: each Montgomery
+  inversion now amortises across 128 points instead of 32, dropping
+  per-point cost from 0.227 µs to 0.122 µs (−46 %). Measured
+  **end-to-end sweep 7.50 ms → 5.25 ms (−30 %)** and random
+  scalar < 2³² stress test 15.5 s → 10.6 s (−32 %).
+  New const `NORMALIZE_GROUP_BATCHES = 4` (commit `65c309f`).
+- **`optimization-decisions/0009-deferred-batch-normalize.md`** documents
+  the deferred-normalize design, measured per-point costs at 32/128/256
+  point groups, and the stack-usage trade-off.
+- **`bench_random_scalar_sweep_lt_2_32`** Criterion benchmark
+  complements the fixed-`d=12345` `end_to_end_small_scalar_12345`
+  with a deterministic-xorshift random scalar (commit `26dca01`).
+
+### Changed
+
+- **`affine_x_bytes` helper inlined at both call sites** (commit
+  `2cadc73`). The `<AffinePoint as PrimeCurveAffine>::is_identity`
+  check was dead code (j ≥ 1 guaranteed by `start.max(1)`; Montgomery
+  `batch_normalize` inputs are non-identity by construction).
+  End-to-end sweep 7.50 ms → 7.33 ms (−2.3 %). Removes the function
+  call overhead and the `PrimeCurveAffine` trait import.
+- **`to_hex_x` no longer uses `unsafe from_utf8_unchecked`** (commit
+  `5034d57`). Hex encoding is always valid UTF-8, so the safe
+  `String::from_utf8(...).expect(...)` is equivalent in practice.
+  Removes the last application-level `unsafe` block in `src/ecc.rs`.
+- **`VariantIndex.x_bytes()` accessor and `x_bytes` field removed**
+  (commit `ca13567`). The field was only used for JSON export
+  round-tripping which never happened. Saves 16 KB + 1 heap
+  allocation per session. **Breaking API change.**
+- **`VariantIndex::new` sorts indices, not pairs** (commit `e883c19`).
+  Avoids the intermediate `Vec<([u8;32], usize)>` by sorting a
+  `Vec<usize>` of indices and materializing the final arrays
+  directly. Saves 1 allocation per session.
+- **`scalar_to_hex_trimmed` uses byte-position scan** instead of
+  `trim_start_matches('0')` (commit `6d8c48d`). The previous
+  implementation constructed a `&str` slice and ran `chars().next()`
+  per leading zero; the byte scan avoids the intermediate `str` and
+  the iteration overhead. Cold path (only on match).
+
+### Reverted (no measurable improvement)
+
+- **OPT-1: mixed `+ G` addition** — no measurable speedup. The
+  theoretical 33% per-add saving (mixed vs projective) is below
+  the ~1.1 µs/add measurement floor; LLVM is already optimizing
+  the chain equivalently. **Committed as experimental; reverted.**
+- **OPT-2: 8-byte fast-path in `match_x`** — no measurable speedup
+  (11.80 ns → 11.74 ns). The `binary_search_by` comparator with
+  `then_with` closure overhead offsets the shorter initial compare.
+  **Implemented and verified; reverted.**
+- **OPT-16: skip 32-byte copy in cached sweep** — not feasible
+  without `unsafe` (k256 `Sub` trait doesn't accept `&ProjectivePoint`;
+  would need manual pointer casting).
+- **OPT-20: remove `let p = *target_p;` copy in `compute_variant_x_bytes`**
+  — not feasible for the same reason (k256 `Sub` trait constraint).
+
+### Not feasible
+
+- **OPT-11: `MaybeUninit` for batch buffers** — the only way to
+  skip the 48 KB stack zero-init. Per the project's "no unsafe code"
+  rule, this optimization is not applied.
 
 ### Changed
 
