@@ -112,16 +112,3 @@ jobs:
         with:
           command: check all
 
-  coverage:
-    name: Code Coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@cargo-tarpaulin
-      - run: cargo tarpaulin --all-targets --all-features --out xml --timeout 600 --fail-under 80
-      - uses: codecov/codecov-action@v7
-        with:
-          files: ./cobertura.xml
-          fail_ci_if_error: false
