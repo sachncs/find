@@ -80,6 +80,21 @@ commit and its commit timestamp.
 - **`bench_random_scalar_sweep_lt_2_32`** Criterion benchmark
   complements the fixed-`d=12345` `end_to_end_small_scalar_12345`
   with a deterministic-xorshift random scalar (commit `26dca01`).
+- **Group-level early-exit flag** in `perform_chunked_sweep`:
+  adds a shared `AtomicBool` checked between normalize groups
+  (every 4 batches), closing the cancellation window left open
+  by `find_map_any`'s inter-super-batch cancellation. End-to-end
+  sweep **5.25 ms → 2.00 ms (−62 %)**. Cumulative vs. pre-super-batch
+  baseline: 9.3 ms → 2.0 ms (**4.65× speedup, 78 % reduction**).
+  Random scalar < 2³² stress test (d=2 147 483 647, j=1):
+  9.2 ms → 6.3 ms (−32 %).
+- **`optimization-decisions/0010-group-early-exit-flag.md`** documents
+  the rationale, measured impact, and alternatives considered.
+- **Per-task buffer sized to exact need**: the normalize group
+  buffer is now `NORMALIZE_GROUP_BATCHES * MAX_BATCH = 128` entries
+  instead of the previous 1024 (`4 * MAX_BATCH`). Cuts stack usage
+  ~8× (20 KB per task vs 164 KB), allowing more Rayon workers to
+  coexist in the default 2–8 MB thread stacks.
 
 ### Changed
 
