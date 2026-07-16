@@ -103,6 +103,13 @@ pub const BATCH_SIZE: u64 = 32;
 /// 32-point batches — a ~46 % saving on the normalization step.
 const NORMALIZE_GROUP_BATCHES: usize = 4;
 
+/// Maximum points in one normalize group: `NORMALIZE_GROUP_BATCHES * MAX_BATCH`.
+/// Sizing the per-task buffer to exactly this (rather than 4 × MAX_BATCH)
+/// cuts stack usage ~8× and lets Rayon scale to 12+ workers without
+/// overflow. 128 points × 96 B = 12 KB projective + 128 × 64 B = 8 KB
+/// affine = 20 KB per task — fits comfortably in 12 × 2 MB stacks.
+const GROUP_CAP: usize = NORMALIZE_GROUP_BATCHES * MAX_BATCH;
+
 /// Number of batches processed sequentially within each parallel task.
 ///
 /// Each super-batch computes one bootstrap scalar multiplication and chains
@@ -853,10 +860,14 @@ pub fn perform_chunked_sweep(
         // modular inversion across the whole group. Measured per-point cost
         // drops from 0.227 µs (32-point groups) to 0.122 µs (128-point
         // groups) — a ~46 % saving on the normalize step.
+        //
+        // The group buffer is sized to hold exactly one group of points
+        // (4 × 32 = 128) — the maximum we'll ever use at once. Previously
+        // sized at 4 × MAX_BATCH = 1024, which wasted 7/8 of the buffer
+        // and overflowed the 8 MB thread stack with 12+ Rayon workers.
         let group_batches: u64 = NORMALIZE_GROUP_BATCHES as u64;
-        let group_points_cap: usize = (group_batches as usize) * MAX_BATCH;
-        let mut group_points_buf = [ProjectivePoint::IDENTITY; 4 * MAX_BATCH];
-        let mut group_affines_buf = [AffinePoint::IDENTITY; 4 * MAX_BATCH];
+        let mut group_points_buf = [ProjectivePoint::IDENTITY; GROUP_CAP];
+        let mut group_affines_buf = [AffinePoint::IDENTITY; GROUP_CAP];
         let g = ecc::generator();
 
         let mut bi = 0;
@@ -882,7 +893,7 @@ pub fn perform_chunked_sweep(
                 }
                 total_count += count;
             }
-            debug_assert!(total_count <= group_points_cap);
+            debug_assert!(total_count <= GROUP_CAP);
 
             // Phase 2: single batch_normalize across the whole group.
             ProjectivePoint::batch_normalize(
@@ -1041,8 +1052,8 @@ pub fn precompute_chunk<W: CacheWriter>(
             // the modular inversion across the whole group (see
             // `perform_chunked_sweep` for the measured per-point savings).
             let group_batches: u64 = NORMALIZE_GROUP_BATCHES as u64;
-            let mut group_points_buf = [ProjectivePoint::IDENTITY; 4 * MAX_BATCH];
-            let mut group_affines_buf = [AffinePoint::IDENTITY; 4 * MAX_BATCH];
+            let mut group_points_buf = [ProjectivePoint::IDENTITY; GROUP_CAP];
+            let mut group_affines_buf = [AffinePoint::IDENTITY; GROUP_CAP];
 
             let mut bi = 0;
             while bi < sb_count {
