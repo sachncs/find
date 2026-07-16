@@ -17,7 +17,7 @@
 //! - **Binary caches** ([`BinaryCacheWriter`]): 32-byte X-coordinate blocks
 //!   appended to per-chunk files. See
 //!   [ADR-0006](../docs/adr/0006-binary-cache-format.md).
-//! - **JSON exports** ([`save_variants_to_json`]): a deterministic
+//! - **JSON exports** ([`write_variants_json`]): a deterministic
 //!   `points.json` audit file mapping X-coordinate → offset decimal.
 //!
 //! # Concurrency
@@ -474,7 +474,7 @@ pub fn sweep_cached(
 ///
 /// ```no_run
 /// use find::ecc;
-/// use find::persistence::save_variants_to_json;
+/// use find::persistence::write_variants_json;
 /// use find::search;
 /// use k256::Scalar;
 ///
@@ -482,13 +482,13 @@ pub fn sweep_cached(
 ///     let target = ecc::scalar_mul_g(&Scalar::from(123u64));
 ///     let variants = search::generate_variants(&target);
 ///     let x_bytes = search::compute_variant_x_bytes(&target);
-///     let path = save_variants_to_json(variants, &x_bytes, "data")?;
+///     let path = write_variants_json(variants, &x_bytes, "data")?;
 ///     println!("wrote {}", path);
 ///     Ok(())
 /// }
 /// ```
 #[instrument(skip(variants, x_bytes, dir_path), level = "info")]
-pub fn save_variants_to_json(
+pub fn write_variants_json(
     variants: &[OffsetVariant],
     x_bytes: &[[u8; 32]],
     dir_path: &str,
@@ -520,7 +520,7 @@ mod tests {
     use k256::Scalar;
     use tempfile::tempdir;
 
-    /// Verifies that [`save_variants_to_json`] creates a valid JSON file.
+    /// Verifies that [`write_variants_json`] creates a valid JSON file.
     #[test]
     fn test_save_to_json_creates_points_file() {
         let target = crate::ecc::scalar_mul_g(&Scalar::from(100u64));
@@ -529,7 +529,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let dir_path = dir.path().to_str().unwrap();
 
-        let res = save_variants_to_json(variants, &x_bytes, dir_path);
+        let res = write_variants_json(variants, &x_bytes, dir_path);
         assert!(res.is_ok());
         assert!(dir.path().join("points.json").exists());
     }

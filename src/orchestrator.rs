@@ -134,7 +134,7 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
     let target_p = ecc::parse_pubkey(&config.pubkey)?;
     let variants = search::generate_variants(&target_p);
     let variant_x_bytes = search::compute_variant_x_bytes(&target_p);
-    persistence::save_variants_to_json(variants, &variant_x_bytes, &config.output_dir)?;
+    persistence::write_variants_json(variants, &variant_x_bytes, &config.output_dir)?;
 
     let index = VariantIndex::new(variants, &variant_x_bytes);
     let checkpoints_dir = Path::new(&config.output_dir).join("checkpoints");
