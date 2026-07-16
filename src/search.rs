@@ -69,10 +69,10 @@
 use crate::ecc;
 use crate::error::{FindError, Result};
 use k256::elliptic_curve::bigint::U256;
+use k256::elliptic_curve::group::prime::PrimeCurveAffine;
 use k256::elliptic_curve::group::Curve;
 use k256::elliptic_curve::ops::Reduce;
 use k256::elliptic_curve::point::AffineCoordinates;
-use k256::elliptic_curve::group::prime::PrimeCurveAffine;
 use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
