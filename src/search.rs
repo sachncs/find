@@ -788,24 +788,6 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
 ///     Ok(())
 /// }
 /// ```
-/// Performs a CPU-bound parallel sweep over a scalar range.
-///
-/// The range `[start, end]` is split into batches of 32 scalars. Each batch
-/// is processed in parallel using Rayon, and points are batch-normalized to
-/// amortize the cost of modular inversion.
-///
-/// # Arguments
-///
-/// * `index` — The variant index to match against.
-/// * `start` — First scalar \(j\) to evaluate (inclusive). Values below 1 are
-///   clamped to 1 because \(j = 0\) yields the identity point, which cannot
-///   match a valid variant.
-/// * `end` — Last scalar \(j\) to evaluate (inclusive).
-///
-/// # Returns
-///
-/// `Some(SearchMatch)` on the first match found, or `None` if the entire
-/// range is exhausted without a match.
 pub fn perform_chunked_sweep(
     index: &VariantIndex,
     start: u64,
