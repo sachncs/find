@@ -226,6 +226,44 @@ commit and its commit timestamp.
   behaviour is unchanged; downstream crates that pin to MSRV ≤ 1.80
   must delay their upgrade or vendor the `core::error::Error` trait.
 
+### Added (k256-bmi2 cleanup pass)
+
+- **`k256-bmi2` crate promoted to a workspace member** (was previously
+  untracked). The crate now has a working `FieldElement5x52::mul`
+  (direct schoolbook on 5×52 limbs, transcribed from k256's
+  `FieldElement5x52::mul_inner`) and `FieldElement5x52::square`
+  (15-product symmetric form, ~30% fewer 128-bit multiplications).
+  Zero `unsafe` blocks. Zero x86-specific code paths. Property
+  tests cross-check every result byte-for-byte against
+  `k256::FieldElement::mul` / `square`.
+- **ADR-0010** (`docs/adr/0010-k256-bmi2-portable-scope.md`) documents
+  the architectural decision: the BMI2/ADX path was a placeholder
+  that never delivered, and the deployment target (Apple M3 Pro,
+  arm64) does not have BMI2/ADX at all. The crate is now positioned
+  as a correctness oracle, not an accelerator.
+
+### Changed (k256-bmi2 cleanup pass)
+
+- **`k256-bmi2` BMI2/ADX code paths removed entirely.** The
+  `mul_bmi2_adx` placeholder that computed 2 of 25 partial products
+  then delegated to `mul_portable` is gone. The `bmi2-adx` Cargo
+  feature is removed. `#![cfg_attr(deny(unsafe_op_in_unsafe_fn))]`
+  and `#![forbid(unsafe_attr_outside_unsafe)]` are removed; the
+  crate now has zero `unsafe` blocks.
+- **`k256-bmi2` `once_cell` dependency removed** (declared but never
+  used; the only feature-detection macro, `is_x86_feature_detected!`,
+  is gone with BMI2/ADX).
+- **`k256-bmi2` dead code and debug scripts removed.**
+  `examples/check_p.rs` and `examples/test_mul.rs` (interactive
+  debug scripts) and `proptest-regressions/lib.txt` (stale
+  shrunken case for `0 × 0`) deleted.
+- **`docs/performance.md` "Scalar sweep throughput ceiling"**:
+  quantified the 27-30 M scalars/sec aggregate ceiling on M3 Pro,
+  with breakdown of per-scalar costs (`+G` chain, batch normalize,
+  bootstrap scalar_mul_g), the path to ~200-300 M/sec on M3 Pro
+  (NEON mul + wNAF bootstrap + NAF chain), and the hard fact that
+  1 B scalars/sec requires ~33+ machines at current per-core rate.
+
 ### Fixed (name audit pass)
 
 - **Orphan rustdoc block above `perform_chunked_sweep`** (now `sweep_parallel`)

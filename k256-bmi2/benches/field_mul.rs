@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Sachin
 // Released under MIT. See LICENSE-MIT.
 //
-//! Benchmarks for k256-bmi2's `FieldElement5x52::mul` against
-//! direct `k256::FieldElement::mul`. The crate is a limb adapter
-//! (delegates to k256), so the bench measures the byte-round-trip
-//! overhead on top of stock k256.
-//!
-//! Run with `cargo bench --bench field_mul`.
+//! Benchmarks for k256-bmi2's `FieldElement5x52::mul` and
+//! `square` against the byte-round-trip path through
+//! `k256::FieldElement::mul`. Run with `cargo bench --bench
+//! field_mul`.
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use k256_bmi2::{limbs_to_be_bytes, be_bytes_to_limbs, FieldElement5x52};
@@ -27,7 +25,7 @@ fn mul_bench(c: &mut Criterion) {
         })
         .collect();
 
-    c.bench_function("k256-bmi2 mul (limb adapter via byte round-trip)", |b| {
+    c.bench_function("k256-bmi2 mul (schoolbook on 5x52 limbs)", |b| {
         b.iter(|| {
             for (a, x) in &scalars {
                 let fa = FieldElement5x52(*a);
@@ -37,7 +35,16 @@ fn mul_bench(c: &mut Criterion) {
         });
     });
 
-    c.bench_function("k256 portable mul (direct limbs path)", |b| {
+    c.bench_function("k256-bmi2 square (15-product symmetric form)", |b| {
+        b.iter(|| {
+            for (a, _) in &scalars {
+                let fa = FieldElement5x52(*a);
+                std::hint::black_box(fa.square());
+            }
+        });
+    });
+
+    c.bench_function("k256 portable mul via byte round-trip", |b| {
         b.iter(|| {
             for (a, x) in &scalars {
                 let a_k = k256::FieldElement::from_bytes(&limbs_to_be_bytes(a).into())

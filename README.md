@@ -232,6 +232,7 @@ review-driven pass:
 | `find::search::MAX_BATCH` const | `pub const MAX_BATCH: usize = 32` | **removed** (commit 7b) |
 | Doctest `Box<dyn std::error::Error>` | in 6+ places | replaced with `Box<dyn core::error::Error>` (commit 16, MSRV 1.81) |
 | MSRV | 1.70 | **1.81** (commit 16) |
+| `k256-bmi2` crate | `bmi2-adx` feature present, `mul_bmi2_adx` placeholder | BMI2/ADX code paths removed; crate is portable-only with working schoolbook `mul` + symmetric `square`. Zero `unsafe`. Not wired into `find`'s hot path; serves as a correctness oracle. (ADR-0010) |
 
 The full review-driven pass added (without breaking the API): `BatchSize` newtype + `try_with_*` builders, run-time batch sizing, `OnceLock<SearchMatch>` coordination, interned static variant metadata, strict `cargo clippy -D warnings` (with curated pedantic + nursery sets), and the required-for-merge `cargo miri` job.
 
@@ -291,6 +292,10 @@ find/
 │       ├── scalar_mul_g.rs
 │       ├── generate_variants.rs
 │       └── match_x.rs
+├── k256-bmi2/          # Workspace member: portable 5×52 limb schoolbook +
+│                       #   symmetric square. Correctness oracle for k256
+│                       #   arithmetic; not wired into find's hot path.
+│                       #   See ADR-0010.
 ├── docs/               # Architecture, algorithms, ADRs, optimization decisions
 ├── Cargo.toml          # Package metadata, deps, [lints], profiles
 └── README.md
@@ -369,6 +374,7 @@ Versions follow [Semantic Versioning](https://semver.org/). The crate is current
 |----------|------------|
 | Language | Rust (2021 edition, **MSRV 1.81**) |
 | Cryptography | k256 0.13 (`arithmetic`, `serde`, `bits`, `pkcs8`) — pure-Rust, audited |
+| Field arithmetic reference | k256-bmi2 0.1.0 (workspace member; portable 5×52 limb schoolbook + symmetric square; correctness oracle only — not wired into the `find` hot path. See [ADR-0010](docs/adr/0010-k256-bmi2-portable-scope.md).) |
 | Parallelism | rayon 1.8 (work-stealing); `find_map_any` for early-exit |
 | CLI | clap 4.4 (derive) |
 | Error Handling | `thiserror` 2 (library), `anyhow` 1 (binary) |

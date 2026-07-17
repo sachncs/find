@@ -226,3 +226,67 @@ For ongoing performance tracking, see [benchmarks.md](benchmarks.md).
 - [benchmarks.md](benchmarks.md) — how to run and interpret the Criterion suite
 - [operations.md#resource-budgets](operations.md#resource-budgets) — recommended hardware
 - [ADR-0001](adr/0001-multi-variant-search.md), [ADR-0002](adr/0002-batch-normalization.md) — algorithm-level decisions
+
+## Scalar sweep throughput ceiling
+
+The `find` hot loop currently sustains ~27-30 M scalars/sec aggregate
+across the 12 cores of an Apple M3 Pro. This is at the chain-step
+ceiling; the `+G` chain step is ~12 field multiplications ≈ 150-250 ns
+per scalar at k256 portable, limiting single-thread throughput to
+~4-7 M scalars/sec.
+
+### Why 1 B/sec scalar sweep is not reachable on a single M3 Pro
+
+The `+G` chain dominates per-scalar cost. Each scalar advances via
+one mixed addition (~12 field multiplications + ~6 adds/subs).
+At ~20 ns/field mul on k256 portable, that's ~240 ns per scalar
+minimum, plus a 1-in-128 normalize amortization (~30 µs / 128 = 230 ns)
+plus a 1-in-256 bootstrap amortization (~80 µs / 256 = 310 ns).
+
+| Component | Per-scalar cost | Notes |
+|---|---|---|
+| `+G` chain (12 mults) | ~250 ns | k256 portable `FieldElement::mul` |
+| Batch normalize (1 inv per 128) | ~230 ns amortized | Montgomery, already optimal |
+| Bootstrap scalar_mul_g (1 per 256) | ~310 ns amortized | k256 fixed-base wNAF |
+| Identity / boundary checks | ~10 ns | Minimal |
+
+Single-thread ceiling: ~4 M scalars/sec.
+12-core aggregate ceiling: ~48 M scalars/sec.
+Current observed: 27-30 M scalars/sec — within the ceiling envelope,
+with Rayon work-stealing and the `OnceLock` early-exit protocol
+accounting for the ~40% gap.
+
+To reach **1 B scalars/sec** on this algorithm: **~250 M3 Pro machines,
+or ~3000 cores**. The bottleneck is fundamental: 12 field
+multiplications per scalar in the chain, at ~20 ns each.
+
+### Quantified improvement paths (single M3 Pro)
+
+| Change | Expected gain | Cost |
+|---|---|---|
+| NEON-vectorized 5×52 mul on arm64 | ~3× chain | New crate `k256-neon` (vectorized schoolbook using 64-bit NEON lanes) |
+| wNAF windowed fixed-base scalar_mul_g (precomputed table of 64 × 256 points) | ~3-5× bootstrap | Modify `find::ecc::scalar_mul_g`; ~512 KB precomputed table |
+| NAF-encoded `+/-G` chain (combined add/sub) | ~25% chain | Modify `find::search::sweep_parallel` |
+| All combined | ~8-10× over current | ~200-300 M scalars/sec aggregate on M3 Pro |
+
+### To reach 1 B/sec scalar sweep
+
+Requires one of:
+
+- **Server hardware**: ~33+ M3 Pro machines at current per-core rate, OR
+- **A different algorithm**: Pippenger multi-scalar mul, which only
+  helps when searching many simultaneous targets (not applicable
+  to `find`'s single-target sweep), OR
+- **A different curve**: smaller-field primes (e.g. BN254 at 254
+  bits) have ~30% shorter chain steps and reach ~30% higher
+  scalar-sweep throughput per core.
+
+### k256-bmi2 is not on the hot path
+
+The `k256-bmi2` crate is a portable 5×52 field-arithmetic
+correctness oracle. Its schoolbook `mul` matches k256's `mul_inner`
+line-for-line, and its `square` uses the 15-product symmetric form
+with the same reduction. It is **not** wired into `find`'s hot
+path; `find` continues to use stock `k256::ProjectivePoint *
+scalar`. See [ADR-0010](adr/0010-k256-bmi2-portable-scope.md)
+for the architectural rationale.
