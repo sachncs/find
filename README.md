@@ -151,17 +151,29 @@ The hot loop is dominated by:
 - Montgomery simultaneous inversion over the `batch_size`-point batch.
 - A binary-search `match_x` in a 16 KiB L1-resident key array.
 
-For the per-batch hot loop, the dominant cost is the **bootstrap scalar
-multiplication** (~80% of per-batch cycles). Increasing `batch_size` beyond 64
-has diminishing returns; the `+G` chain + Montgomery normalize + match together
-take the remaining 20%. The batch-size choice now trades against per-batch
-allocation cost (the hot-path arrays are heap-allocated and sized at
-runtime) — see [ADR-0009](docs/adr/0009-runtime-batch-size.md).
+`find::ecc::scalar_mul_g` uses k256's `MulByGenerator::mul_by_generator`
+with the `precomputed-tables` feature enabled. A 33-entry Radix16 lookup
+table (~30 KB static, lazily built) cuts the bootstrap scalar-mul cost
+roughly in half. Measured on M3 Pro (opt-level=3, lto=fat, criterion 100
+samples):
 
-The per-session cold-start cost of `generate_variants` is now effectively
-free on the happy path: the 512-entry variant metadata (label, scalar,
-decimal offset) is interned via `OnceLock<Box<[OffsetVariant; 512]>>` once
-per process. Only the target-specific `compute_variant_x_bytes` remains
+| Bench | Pre-precomputed-tables | Post-precomputed-tables | Speedup |
+|---|---|---|---|
+| `plus_g_chain/chain_32_plus_g` | 33.78 µs | 18.93 µs | 1.78× |
+| `plus_g_chain/naive_32_independent_scalar_muls` | 919.88 µs | 455.89 µs | 2.02× |
+| `end_to_end_small_scalar_12345` (10M scalars) | ~5.27 ms | 1.949 ms | 2.70× |
+
+Before the precomputed-tables change the bootstrap was ~80% of per-batch
+cycles; now the chain + Montgomery normalize + match collectively take
+the lead. Increasing `batch_size` beyond 64 has diminishing returns. The
+batch-size choice trades against per-batch allocation cost (the hot-path
+arrays are heap-allocated and sized at runtime) — see
+[ADR-0009](docs/adr/0009-runtime-batch-size.md).
+
+The per-session cold-start cost of `generate_variants` is effectively free
+on the happy path: the 512-entry variant metadata (label, scalar, decimal
+offset) is interned via `OnceLock<Box<[OffsetVariant; 512]>>` once per
+process. Only the target-specific `compute_variant_x_bytes` remains
 per-session work. See [opt-decision 0002](docs/optimization-decisions/0002-variant-labels-once-lock.md) and the new `optimization-decisions/0007-oncelock-early-exit.md` for the surrounding decisions.
 
 For sustained workloads, the cached sweep path is ~100× faster than the
@@ -381,7 +393,7 @@ Versions follow [Semantic Versioning](https://semver.org/). The crate is current
 | Serialization | serde 1 + serde_json 1 (checkpoint + points.json export) |
 | Observability | `tracing` 0.1 + `tracing-subscriber` 0.3 (`env-filter`) + `tracing-appender` 0.2 |
 | Hot-path encoding | hex 0.4, `k256::elliptic_curve::bigint::U256` (no BigUint) |
-| Hex + big-int (test helpers) | `num-bigint` 0.5 |
+| Hex + big-int (test helpers only) | `num-bigint` 0.5 (dev-dep) |
 | POSIX (Unix only) | `libc` 0.2 (the one reviewed `unsafe`: `libc::fsync` in `src/persistence.rs`) |
 | Testing | `proptest` 1.11, `criterion` 0.8, `tempfile` 3, `rand` 0.10, `rand_chacha` 0.10, `num-traits` 0.2 |
 | CI/CD | GitHub Actions (Ubuntu + macOS + Windows); `cargo miri` on `ubuntu-latest` is required-for-merge |
