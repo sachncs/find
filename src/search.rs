@@ -1169,6 +1169,12 @@ pub fn sweep_address(
     variants: &'static [OffsetVariant],
 ) -> Option<SearchMatch> {
     use k256::elliptic_curve::Group;
+    use std::time::{Duration, Instant};
+
+    // Per-worker rate-limit for progress logging so a multi-hour sweep
+    // still produces human-readable throughput every few seconds
+    // without dominating the log file.
+    const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(15);
 
     let start = start.max(1);
     if start > end {
@@ -1194,6 +1200,17 @@ pub fn sweep_address(
     let num_sb: u128 = (num_batches - 1) / sb_size + 1;
     let num_sb_u64: u64 = u64::try_from(num_sb).unwrap_or(u64::MAX);
     let found_flag = std::sync::atomic::AtomicBool::new(false);
+    // Cross-worker counters for the progress log:
+    //  - `processed`: u64 counter that wraps at u64::MAX. Per-sb logging
+    //    fires before wrap (default 256 batches * 32 scalars = ~8192),
+    //    so the counter won't wrap for ranges below ~2^64 scalars.
+    //    Above that, the printed count restarts from zero — an honest
+    //    signal to the reader that we're past u64::MAX processed.
+    //  - `last_log_at_ns`: nanoseconds since sweep start when the last
+    //    progress line was emitted. We throttle to PROGRESS_LOG_INTERVAL.
+    let processed: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let last_log_at_ns: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sweep_started_at = Instant::now();
 
     (0..num_sb_u64).into_par_iter().find_map_any(|sb_idx| {
         // u64 -> u128 conversions for the loop body. Rayon enforces `sb_idx
@@ -1237,6 +1254,39 @@ pub fn sweep_address(
                 }
             }
             batch_idx = batch_idx.saturating_add(1);
+
+            // Cross-worker progress log: only the next worker that has
+            // crossed a 1024-batch boundary and that no other worker
+            // has logged in the last PROGRESS_LOG_INTERVAL writes a line.
+            let count_u64 = u64::try_from(count).unwrap_or(u64::MAX);
+            let prev = processed.fetch_add(count_u64, std::sync::atomic::Ordering::Relaxed);
+            let total = prev.saturating_add(count_u64);
+            // Cheap "is this a new boundary?" check on the high bits.
+            if prev >> 10 != total >> 10 {
+                // Attempt to claim the next log slot. Throttled to
+                // one log per PROGRESS_LOG_INTERVAL across all workers.
+                let now_ns = sweep_started_at.elapsed().as_nanos() as u64;
+                let prev_ns = last_log_at_ns.load(std::sync::atomic::Ordering::Relaxed);
+                let gap_ns = now_ns.saturating_sub(prev_ns);
+                if gap_ns >= PROGRESS_LOG_INTERVAL.as_nanos() as u64
+                    && last_log_at_ns
+                        .compare_exchange(
+                            prev_ns,
+                            now_ns,
+                            std::sync::atomic::Ordering::AcqRel,
+                            std::sync::atomic::Ordering::Acquire,
+                        )
+                        .is_ok()
+                {
+                    let elapsed = sweep_started_at.elapsed().as_secs_f64();
+                    tracing::info!(
+                        scalars = %total,
+                        elapsed_secs = %elapsed,
+                        rate_M_s = %(total as f64 / elapsed / 1e6),
+                        "sweep_address_progress"
+                    );
+                }
+            }
         }
         None
     })
