@@ -100,6 +100,14 @@ pub enum FindError {
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
+    /// A Bitcoin address (or other hash40-style reference) failed to parse.
+    ///
+    /// Distinct from `InvalidPublicKey` because the input is a base58
+    /// string, not a hex SEC1 pubkey. Recoverability is the same: reject
+    /// input, do not retry.
+    #[error("Invalid Bitcoin address: {0}")]
+    InvalidAddress(String),
+
     /// An underlying I/O operation failed.
     ///
     /// This covers checkpoint writes, cache reads, directory creation, and
@@ -140,6 +148,7 @@ impl Clone for FindError {
             Self::ResearchIntegrityError(s) => Self::ResearchIntegrityError(s.clone()),
             Self::InvalidPublicKey(s) => Self::InvalidPublicKey(s.clone()),
             Self::InvalidConfig(s) => Self::InvalidConfig(s.clone()),
+            Self::InvalidAddress(s) => Self::InvalidAddress(s.clone()),
             Self::Io(e) => Self::Io(std::io::Error::new(e.kind(), e.to_string())),
             Self::HexError(e) => Self::HexError(*e),
             Self::SerializationError(e) => Self::SerializationError(serde_json::Error::io(

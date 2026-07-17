@@ -500,6 +500,7 @@ dependencies = [
  "secp256k1-sys",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "tracing",
