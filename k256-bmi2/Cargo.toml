@@ -6,11 +6,11 @@ description = "BMI2/ADX-accelerated field multiplication for secp256k1 — drop-
 license = "MIT"
 
 [dependencies]
-# Used by property tests to verify the portable mul matches k256's
-# reference FieldElement::mul byte-for-byte.
-k256 = { version = "0.13", features = ["arithmetic", "expose-field", "bits", "pkcs8"] }
 
 [dev-dependencies]
+# Used by the `mul_matches_k256_reference` test to verify byte-exact
+# equivalence with the reference k256 FieldElement::mul.
+k256 = { version = "0.13", features = ["arithmetic", "expose-field", "bits", "pkcs8"] }
 proptest = "1"
 criterion = "0.8"
 
