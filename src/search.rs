@@ -995,8 +995,10 @@ pub fn sweep_and_cache<W: CacheWriter>(
     // to find a match wins via `set`; subsequent workers see the value
     // but their `set` returns Err and is discarded. Replaces the
     // previous `Mutex<Option<SearchMatch>> + AtomicBool` pair (see
-    // optimization-decisions/0004-atomic-flag-early-exit.md and the
-    // upcoming 0007-oncelock-early-exit.md for the rationale).
+    // [optimization-decisions/0004-atomic-flag-early-exit.md] for the
+    // predecessor design and
+    // [optimization-decisions/0007-oncelock-early-exit.md] for the
+    // current rationale).
     let match_once: OnceLock<SearchMatch> = OnceLock::new();
 
     (0..num_sb)
