@@ -1169,12 +1169,7 @@ pub fn sweep_address(
     variants: &'static [OffsetVariant],
 ) -> Option<SearchMatch> {
     use k256::elliptic_curve::Group;
-    use std::time::{Duration, Instant};
-
-    // Per-worker rate-limit for progress logging so a multi-hour sweep
-    // still produces human-readable throughput every few seconds
-    // without dominating the log file.
-    const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(15);
+    use std::time::Instant;
 
     let start = start.max(1);
     if start > end {
@@ -1200,16 +1195,16 @@ pub fn sweep_address(
     let num_sb: u128 = (num_batches - 1) / sb_size + 1;
     let num_sb_u64: u64 = u64::try_from(num_sb).unwrap_or(u64::MAX);
     let found_flag = std::sync::atomic::AtomicBool::new(false);
-    // Cross-worker counters for the progress log:
-    //  - `processed`: u64 counter that wraps at u64::MAX. Per-sb logging
-    //    fires before wrap (default 256 batches * 32 scalars = ~8192),
-    //    so the counter won't wrap for ranges below ~2^64 scalars.
-    //    Above that, the printed count restarts from zero — an honest
+    // Cross-worker counters for the milestone log:
+    //  - `processed`: u64 counter that wraps at u64::MAX. The printed
+    //    scalar count restarts from zero past that point — an honest
     //    signal to the reader that we're past u64::MAX processed.
-    //  - `last_log_at_ns`: nanoseconds since sweep start when the last
-    //    progress line was emitted. We throttle to PROGRESS_LOG_INTERVAL.
+    //  - `logged_milestone`: flips to true once the first log line
+    //    has been emitted. After that, the per-batch log block is a
+    //    single load + branch — no atomic write per batch.
+    const MILESTONE_SCALARS: u64 = 100_000_000;
     let processed: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let last_log_at_ns: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let logged_milestone: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let sweep_started_at = Instant::now();
 
     (0..num_sb_u64).into_par_iter().find_map_any(|sb_idx| {
@@ -1255,35 +1250,39 @@ pub fn sweep_address(
             }
             batch_idx = batch_idx.saturating_add(1);
 
-            // Cross-worker progress log: only the next worker that has
-            // crossed a 1024-batch boundary and that no other worker
-            // has logged in the last PROGRESS_LOG_INTERVAL writes a line.
+            // Per-batch atomic: increment the cross-worker counter.
+            // After the increment, one worker checks the threshold and
+            // emits ONE progress line if the threshold has just been
+            // crossed. No timer; no per-batch log spam.
+            //
+            // The `logged_milestone` flag short-circuits the milestone
+            // check after the first emission: subsequent batches pay
+            // only a load + branch + a single `fetch_add` (the counter
+            // itself is needed for the milestone boundary check).
             let count_u64 = u64::try_from(count).unwrap_or(u64::MAX);
             let prev = processed.fetch_add(count_u64, std::sync::atomic::Ordering::Relaxed);
             let total = prev.saturating_add(count_u64);
-            // Cheap "is this a new boundary?" check on the high bits.
-            if prev >> 10 != total >> 10 {
-                // Attempt to claim the next log slot. Throttled to
-                // one log per PROGRESS_LOG_INTERVAL across all workers.
-                let now_ns = sweep_started_at.elapsed().as_nanos() as u64;
-                let prev_ns = last_log_at_ns.load(std::sync::atomic::Ordering::Relaxed);
-                let gap_ns = now_ns.saturating_sub(prev_ns);
-                if gap_ns >= PROGRESS_LOG_INTERVAL.as_nanos() as u64
-                    && last_log_at_ns
-                        .compare_exchange(
-                            prev_ns,
-                            now_ns,
-                            std::sync::atomic::Ordering::AcqRel,
-                            std::sync::atomic::Ordering::Acquire,
-                        )
-                        .is_ok()
+            if !logged_milestone.load(std::sync::atomic::Ordering::Relaxed)
+                && total >= MILESTONE_SCALARS
+            {
+                // Try to claim the milestone. The relaxed CAS may
+                // spuriously fail under high contention; that's fine —
+                // another worker has already won.
+                if logged_milestone
+                    .compare_exchange(
+                        false,
+                        true,
+                        std::sync::atomic::Ordering::AcqRel,
+                        std::sync::atomic::Ordering::Acquire,
+                    )
+                    .is_ok()
                 {
                     let elapsed = sweep_started_at.elapsed().as_secs_f64();
                     tracing::info!(
                         scalars = %total,
                         elapsed_secs = %elapsed,
                         rate_M_s = %(total as f64 / elapsed / 1e6),
-                        "sweep_address_progress"
+                        "sweep_address_milestone"
                     );
                 }
             }
