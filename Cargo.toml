@@ -15,7 +15,7 @@ keywords = ["bitcoin", "secp256k1", "ecc", "search", "cryptography"]
 
 [dependencies]
 # Cryptography
-k256 = { version = "0.13", features = ["arithmetic", "serde", "bits", "pkcs8"] }
+k256 = { version = "0.13", features = ["arithmetic", "serde", "bits", "pkcs8", "precomputed-tables"] }
 
 # CLI & parsing
 clap = { version = "4.4", features = ["derive", "env"] }

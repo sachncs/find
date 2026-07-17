@@ -167,6 +167,12 @@ pub fn hex_to_scalar(hex: &str) -> Result<Scalar> {
 /// This is the primary operation used during the search sweep to generate
 /// candidate points.
 ///
+/// Uses [`k256::elliptic_curve::ops::MulByGenerator::mul_by_generator`]
+/// instead of `ProjectivePoint::GENERATOR * d` so that the optional
+/// `precomputed-tables` feature (enabled by default) can supply the
+/// precomputed generator table — about 2× faster on the typical
+/// scalar-mul bootstrap.
+///
 /// # Security
 ///
 /// Not constant-time; the underlying k256 fixed-base multiplication leaks
@@ -174,7 +180,8 @@ pub fn hex_to_scalar(hex: &str) -> Result<Scalar> {
 /// where the scalar is secret.
 #[inline(always)]
 pub fn scalar_mul_g(d: &Scalar) -> ProjectivePoint {
-    ProjectivePoint::GENERATOR * d
+    use k256::elliptic_curve::ops::MulByGenerator;
+    ProjectivePoint::mul_by_generator(d)
 }
 
 /// Computes the point difference \(R = P - Q\) in projective coordinates.
