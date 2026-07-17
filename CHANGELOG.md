@@ -621,3 +621,8 @@ SHA, ISO-8601 commit date, and one-line summary. Generated from
 | `f0fb9b7` | 2026-07-17 | refactor(ecc): rename parameter hex_str to hex in parse_pubkey and hex_to_scalar. |
 | `99b7439` | 2026-07-17 | refactor(persistence)!: rename save_variants_to_json to write_variants_json. |
 | `04776e8` | 2026-07-17 | refactor(config)!: rename MIN_J to MIN_SEARCH_SCALAR and Config::validate to validate_fields. |
+| `66a6a43` | 2026-07-17 | refactor(k256-bmi2): strip BMI2/ADX code paths, make portable-only. |
+| `28fb891` | 2026-07-17 | chore(k256-bmi2): remove proptest-regressions stale failure case. |
+| `3012a67` | 2026-07-17 | feat(k256-bmi2): implement direct schoolbook multiplication on 5x52 limbs. |
+| `bd44986` | 2026-07-17 | perf(k256-bmi2): add square with a[i]*a[j] == a[j]*a[i] symmetry. |
+| `c66a796` | 2026-07-17 | docs: ADR-0010 + perf quantification + README/CHANGELOG for k256-bmi2 pass. |
