@@ -92,10 +92,7 @@ fn main() {
 
                 eprintln!(
                     "  {}: match via {} at j={}, candidates={:?}",
-                    status,
-                    m.label,
-                    m.j,
-                    m.candidates
+                    status, m.label, m.j, m.candidates
                 );
                 eprintln!(
                     "  sweep: {elapsed_ns} ns for {scalars_in_window} scalars \
