@@ -11,6 +11,7 @@
 use find::ecc;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::ProjectivePoint;
+use k256::Scalar;
 
 /// The canonical compressed SEC1 encoding of the secp256k1 generator point G.
 ///
@@ -180,4 +181,145 @@ mod prop_to_hex_x {
             prop_assert_eq!(hex_a, hex_b);
         }
     }
+}
+
+// ============================================================================
+// New KAT (commit 5): hash40 sweep round-trip
+// ============================================================================
+
+/// Build a Bitcoin address from a known scalar `d`. The pipeline mirrors
+/// the standard mainnet P2PKH construction:
+//     compressed_pubkey = SEC1_compressed(d * G)
+///     hash40            = RIPEMD160(SHA256(compressed_pubkey))
+///     address           = Base58Check(0x00 || hash40)
+///
+/// Used to verify that address-mode discovery actually finds `d` when
+/// the sweep range covers it.
+fn address_for_scalar(d: u64) -> (String, find::address::Address40) {
+    use k256::elliptic_curve::sec1::ToEncodedPoint;
+    use ripemd::Ripemd160;
+    use sha2::{Digest, Sha256};
+    let p = ecc::scalar_mul_g(&Scalar::from(d));
+    let enc = p.to_encoded_point(true);
+    let sha_out = Sha256::digest(enc.as_bytes());
+    let ripemd_out = Ripemd160::digest(sha_out);
+    let mut h = [0u8; 20];
+    h.copy_from_slice(&ripemd_out);
+    let addr40 = find::address::Address40(h);
+    // Manually Base58Check-encode version 0x00 || hash40.
+    let mut body = vec![0x00u8];
+    body.extend_from_slice(&h);
+    let inner = Sha256::digest(&body[..]);
+    let cs_hash = Sha256::digest(&inner[..]);
+    body.extend_from_slice(&cs_hash[..4]);
+    // Use bitcoin's base58 alphabet.
+    const ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let mut zeros = 0;
+    for &b in &body {
+        if b == 0 {
+            zeros += 1;
+        } else {
+            break;
+        }
+    }
+    let body_no_zeros: Vec<u8> = body[zeros..].to_vec();
+    let mut digits: Vec<u8> = Vec::new();
+    let mut acc = body_no_zeros;
+    while !acc.is_empty() && (acc.iter().any(|&b| b != 0) || !digits.is_empty()) {
+        let mut rem: u32 = 0;
+        let mut new_acc: Vec<u8> = Vec::with_capacity(acc.len());
+        let mut started = false;
+        for &b in &acc {
+            let cur = rem * 256 + b as u32;
+            let q = cur / 58;
+            rem = cur % 58;
+            if started || q > 0 {
+                new_acc.push(q as u8);
+                started = true;
+            }
+        }
+        digits.push(rem as u8);
+        acc = new_acc;
+    }
+    digits.reverse();
+    let mut address = String::with_capacity(zeros + digits.len());
+    for _ in 0..zeros {
+        address.push('1');
+    }
+    for &d in &digits {
+        address.push(ALPHABET[d as usize] as char);
+    }
+    (address, addr40)
+}
+
+/// Verifies a known scalar's hash40 matches its Bitcoin address's
+/// hash40 (a round-trip through the full pipeline).
+#[test]
+fn kat_address_for_scalar_roundtrip() {
+    // d=1 (which is G) is a documented, reproducible test vector.
+    // Compressed pubkey of G:
+    //   0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798
+    // SHA-256 = 751e76e8199196d454941c45d1b3a323f1433bd6
+    // => hash40 = 751e76e8199196d454941c45d1b3a323f1433bd6
+    // So address(d=1) hashes to 751e76e8...
+    let (_addr, hash40) = address_for_scalar(1);
+    assert_eq!(
+        hash40.0,
+        [
+            0x75, 0x1e, 0x76, 0xe8, 0x19, 0x91, 0x96, 0xd4, 0x54, 0x94, 0x1c, 0x45, 0xd1, 0xb3,
+            0xa3, 0x23, 0xf1, 0x43, 0x3b, 0xd6,
+        ],
+        "address_for_scalar(d=1) hash40 must equal RIPEMD160(SHA256(G-compressed))"
+    );
+}
+
+/// Verifies that the binary's address-mode CLI does parse the standard
+/// P2PKH address `1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa` (the genesis-block
+/// coinbase address, version byte 0x00, hash40
+/// `62e907b15cbf27d5425399ebf6f0fb50ebb88f18`).
+#[test]
+fn kat_genesis_address_decodes_cleanly() {
+    let (_v, addr) = find::address::bitcoin_address_to_hash40("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
+        .expect("genesis address must decode");
+    assert_eq!(
+        hex::encode(addr.0),
+        "62e907b15cbf27d5425399ebf6f0fb50ebb88f18"
+    );
+}
+
+/// Confirms sweep_address finds d when d is inside the user range.
+///
+/// Verifies that a small synthetic search recovers the seed value.
+#[test]
+fn kat_sweep_address_finds_d_in_range() {
+    use find::search::sweep_address;
+    // d = 42 must satisfy address_for_scalar(d=42)
+    let (_addr_string, hash40) = address_for_scalar(42);
+    let variants = find::search::generate_variants(&ecc::generator());
+    let result =
+        sweep_address(40, 50, 32, hash40, variants).expect("d=42 is in [40, 50] and must match");
+    assert!(
+        result.candidates.contains(&Scalar::from(42u64)),
+        "recovered candidates must include d=42; got {:?}",
+        result.candidates
+    );
+    assert_eq!(
+        result.label, "address/d",
+        "address-mode match must use the address/d label; got {:?}",
+        result.label
+    );
+}
+
+/// `sweep_address` returns None when the target hash40 is not in the range.
+#[test]
+fn kat_sweep_address_returns_none_when_target_not_in_range() {
+    use find::search::sweep_address;
+    // Pick a hash40 from a real, different scalar.
+    let (_addr, hash40) = address_for_scalar(123_456_789);
+    let variants = find::search::generate_variants(&ecc::generator());
+    let result = sweep_address(1, 1000, 32, hash40, variants);
+    assert!(
+        result.is_none(),
+        "address 123_456_789's hash40 must not appear in [1, 1000]"
+    );
 }

@@ -1224,22 +1224,31 @@ pub fn sweep_address(
 /// "partner" Y-parity share of the same hash40 target. Reported so
 /// that downstream callers see a `[Scalar; 2]` shape consistent with
 /// the variant-keyed sweep's output.
+/// Build a [`SearchMatch`] for an address-keyed hit.
+///
+/// `-d` (additive inverse) is the "partner" Y-parity share of the same
+/// hash40 target. Reported so downstream callers see a `[Scalar; 2]`
+/// shape consistent with the variant-keyed sweep's output.
+///
+/// Note: we use `negate()` instead of subtracting from a fixed `n`
+/// because `n` itself is not representable as a scalar (it's the
+/// Build a [`SearchMatch`] for an address-keyed hit.
+///
+/// `-d` (additive inverse) is the "partner" Y-parity share of the same
+/// hash40 target. Reported so downstream callers see a `[Scalar; 2]`
+/// shape consistent with the variant-keyed sweep's output.
+///
+/// Note: we use `negate()` instead of subtracting from a fixed `n`
+/// because `n` itself is not representable as a scalar (it's the
+/// modulus; `Scalar::from_repr(n_bytes)` returns None because `n`
+/// reduces to 0 in F_n).
 fn make_address_match(
     d: u64,
     target: crate::address::Address40,
     _variants: &'static [OffsetVariant],
 ) -> SearchMatch {
-    use k256::elliptic_curve::PrimeField;
     let d_scalar = Scalar::from(d);
-    // secp256k1 curve order n, big-endian.
-    let n_bytes: [u8; 32] = [
-        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36,
-        0x41, 0x41,
-    ];
-    let n_scalar = Option::<Scalar>::from(Scalar::from_repr(n_bytes.into()))
-        .expect("curve order bytes are canonical");
-    let alt_scalar = n_scalar.sub(&d_scalar);
+    let alt_scalar = d_scalar.negate();
 
     // First 4 bytes of the address hash -> 8 hex chars. Used as the
     // offset_decimal label so the address path is visible in CLI output.
