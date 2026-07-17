@@ -1,60 +1,90 @@
 # CLI Reference
 
-The `find` binary is the primary user interface. It accepts a target SEC1 public key and runs a multi-variant range-splitting search.
+The `find` binary accepts one of two input shapes:
+
+| Mode | Required flags | Sweep target | Compared against |
+|---|---|---|---|
+| **Pubkey mode** (default) | `--pubkey <hex>` | 512-variant X-coordinate index | Each scalar's `x(j·G)` |
+| **Address mode** | `--address <base58>`, `--from` and `--to` | Hash40 of compressed pubkey | Each scalar's `RIPEMD-160(SHA-256(j·G compressed))` |
+
+The two modes are mutually exclusive (`clap` rejects the second arg-pair
+when the first is set). `find --pubkey <X> --address <A>` exits non-zero.
 
 ## Synopsis
 
 ```bash
+# Pubkey mode (default, multi-variant X-coord sweep):
 find [OPTIONS] --pubkey <HEX_SEC1>
+
+# Address mode (hash40 sweep over a user range):
+find -a <base58_address> --from <hex_or_dec> --to <hex_or_dec> [OPTIONS]
 ```
 
 ## Flags
 
-| Flag | Short | Type | Default | Range | Description |
-|---|---|---|---|---|---|
-| `--pubkey` | `-p` | `String` (required) | — | — | HEX-encoded SEC1 public key (compressed or uncompressed) |
-| `--output-dir` | `-o` | `String` | `data` | — | Data and checkpoint root directory |
-| `--log-dir` | `-l` | `String` | `logs` | — | Rolling log directory |
-| `--cache-points` | `-c` | `bool` | `false` | — | Persist `j·G` X-coordinates to binary caches for multi-pubkey reuse |
-| `--batch-size` | `-b` | `u32` | `32` | `1..=256` | Points per Montgomery batch normalization; honoured at runtime (commit 7b). Out-of-range values produce `FindError::InvalidConfig` and exit non-zero. |
-| `--variants` | `-V` | `u32` | `512` | `1..=512` | Powers-of-two + cumulative-sum variant count. Out-of-range values produce `FindError::InvalidConfig` and exit non-zero. |
-| `--help` | `-h` | — | — | — | Print help |
-| `--version` | `-V` | — | — | — | Print version |
+| Flag | Short | Type | Default | Range | Mode | Description |
+|---|---|---|---|---|---|---|
+| `--pubkey` | `-p` | `String` | — | — | pubkey | HEX-encoded SEC1 public key (compressed or uncompressed). Required in pubkey mode; ignored in address mode. |
+| `--address` | `-a` | `String` | — | — | address | Base58 Bitcoin mainnet address (P2PKH `0x00` or P2SH `0x05`). Strict Base58Check; non-standard versions rejected. |
+| `--from` | — | `hex or dec` | `1` | `0..=2^64-1` | address | Inclusive scalar lower bound. Hex accepted with `0x` prefix. |
+| `--to` | — | `hex or dec` | `u64::MAX` | `0..=2^64-1` | address | Inclusive scalar upper bound. Hex accepted with `0x` prefix. |
+| `--output-dir` | `-o` | `String` | `data` | — | both | Data and checkpoint root directory |
+| `--log-dir` | `-l` | `String` | `logs` | — | both | Rolling log directory |
+| `--cache-points` | `-c` | `bool` | `false` | — | pubkey | Persist `j·G` X-coordinates to binary caches for multi-pubkey reuse. **Auto-disabled in address mode** (the cache stores X-coords, which the address sweep does not produce). |
+| `--batch-size` | `-b` | `u32` | `32` | `1..=256` | both | Points per iteration batch; honoured at runtime. |
+| `--variants` | `-V` | `u32` | `512` | `1..=512` | pubkey | Powers-of-two + cumulative-sum variant count. Ignored in address mode. |
+| `--help` | `-h` | — | — | — | — | Print help |
+| `--version` | `-V` | — | — | — | — | Print version |
 
 The two runtime tunables (`--batch-size`, `--variants`) flow through
 `Config::try_with_batch_size` / `Config::try_with_variant_count`
-(commit 7a). The panicking `Config::with_batch_size` /
-`Config::with_variant_count` builders that the binary used to call are
-now `#[deprecated]`; the CLI wrapper has been switched to the fallible
-builders as of commit 7a.
+(commit 7a). Out-of-range values produce `FindError::InvalidConfig`
+and exit non-zero.
 
 ## Examples
 
-### Basic search
+### Basic pubkey search
 
 ```bash
 find --pubkey 0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798
 ```
 
-This runs a CPU-bound parallel sweep without writing any cache files.
+Runs a CPU-bound parallel sweep without writing any cache files.
 
-### With binary caching
+### Address discovery with explicit range
+
+```bash
+find --address 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa --from 1 --to 100000000
+```
+
+Searches scalars `d ∈ [1, 10^8]` and reports each `d` whose compressed
+pubkey hashes to `62e907b15cbf27d5425399ebf6f0fb50ebb88f18`. The genesis-block
+coinbase address is supplied here as a worked example; in practice it
+isn't a known private-key address, but the path is identical for any
+address whose keyspace overlaps the supplied `[from, to]` window.
+
+### Address discovery (hex range)
+
+```bash
+find --address 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa \
+     --from 0xff00 --to 0xffff
+```
+
+Hex scalars are accepted with a `0x` prefix or as plain hex. Decimal
+requires no prefix. Either form is auto-detected.
+
+### With binary caching (pubkey mode only)
 
 ```bash
 find --pubkey 0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798 --cache-points
 ```
 
-This precomputes a 32 GB cache file per billion scalars. Subsequent runs against any public key reuse the cache.
+Precomputes a 32 GB cache file per billion scalars. Subsequent runs
+against any public key reuse the cache. `--cache-points` is silently
+disabled in address mode (the address sweep does not produce the
+X-coordinates that the cache expects).
 
-### Custom directories
-
-```bash
-find --pubkey 0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798 \
-     --output-dir /var/lib/find \
-     --log-dir /var/log/find
-```
-
-### Resuming a checkpointed search
+### Resuming a checkpointed search (pubkey mode only)
 
 ```bash
 # First run (creates checkpoint)

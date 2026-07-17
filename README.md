@@ -24,11 +24,12 @@ and offsets `V` such that `x(j·G) = x(P - V·G)`, yielding key candidates
 ## Features
 
 - **512-Variant Search Engine** — Range-splitting using powers of 2 and cumulative summations; the 512-variant set is interned once per process (no per-session allocations).
+- **Two input modes** — `--pubkey <hex>` for the traditional variant-keyed X-coordinate sweep; `--address <base58>` + `--from X --to Y` for hash40-targeted discovery over a user-specified range. See [ADR-0011](docs/adr/0011-address-discovery.md).
 - **Runtime-sized batch arrays** — `Vec<ProjectivePoint>` / `Vec<AffinePoint>` / `Vec<u8>` sized against `Config::batch_size` (1..=256). See [ADR-0009](docs/adr/0009-runtime-batch-size.md).
 - **Batch Normalization** — Montgomery's simultaneous inversion for ~15–20× speedup in the normalization phase.
 - **Parallel Sweep** — Work-stealing data-level parallelism via `rayon` with early-exit.
 - **Lock-free cross-batch coordination** — `OnceLock<SearchMatch>` replaces the previous `Mutex + AtomicBool` pair (see [opt-decision 0007](docs/optimization-decisions/0007-oncelock-early-exit.md)).
-- **Binary Caching** — Optional precomputation for I/O-bound cache scans (~100× speedup on NVMe).
+- **Binary Caching** — Optional precomputation for I/O-bound cache scans (~100× speedup on NVMe). Auto-disabled in address mode.
 - **Atomic Checkpointing** — Write-then-rename for crash-safe state persistence with integrity anchor.
 - **Structured Observability** — Non-blocking rolling file logs with `tracing`.
 - **Comprehensive Testing** — Property-based, integration, orchestrator, audit, KAT, and differential test suites.
@@ -78,6 +79,11 @@ find --pubkey 0279be... --batch-size 64 --variants 256
 
 # Custom data and log directories
 find --pubkey 0279be66... --output-dir <DIR> --log-dir <DIR>
+
+# Address-keyed discovery: search [from, to] for the scalar behind a
+# mainnet P2PKH/P2SH address. `--from` / `--to` accept decimal or
+# `0x`-prefixed hex. See docs/cli.md and ADR-0011.
+find --address 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa --from 1 --to 100000000
 ```
 
 For a guided walkthrough, see [docs/getting-started.md](docs/getting-started.md).
@@ -393,6 +399,7 @@ Versions follow [Semantic Versioning](https://semver.org/). The crate is current
 | Serialization | serde 1 + serde_json 1 (checkpoint + points.json export) |
 | Observability | `tracing` 0.1 + `tracing-subscriber` 0.3 (`env-filter`) + `tracing-appender` 0.2 |
 | Hot-path encoding | hex 0.4, `k256::elliptic_curve::bigint::U256` (no BigUint) |
+| Address discovery (hash40 path) | `sha2` 0.10, `ripemd` 0.1 (pure-Rust, audited) |
 | Hex + big-int (test helpers only) | `num-bigint` 0.5 (dev-dep) |
 | POSIX (Unix only) | `libc` 0.2 (the one reviewed `unsafe`: `libc::fsync` in `src/persistence.rs`) |
 | Testing | `proptest` 1.11, `criterion` 0.8, `tempfile` 3, `rand` 0.10, `rand_chacha` 0.10, `num-traits` 0.2 |
