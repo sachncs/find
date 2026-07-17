@@ -164,6 +164,7 @@ impl std::fmt::Display for BatchSize {
 #[derive(Debug, Clone)]
 pub struct Config {
     /// HEX-encoded SEC1 public key (compressed or uncompressed).
+    /// Required when `target_address` is `None`; ignored otherwise.
     pub pubkey: String,
     /// Root directory for checkpoints, caches, and exported variant metadata.
     pub output_dir: String,
@@ -177,8 +178,8 @@ pub struct Config {
     /// Defaults to [`BatchSize::DEFAULT`]. Tunable via
     /// [`Config::with_batch_size`] (panicking) or
     /// [`Config::try_with_batch_size`] (fallible). Smaller values
-    /// reduce per-batch allocation cost; larger values amortise the
-    /// single Montgomery inversion across more points.
+    /// reduce per-batch allocation cost; larger values amortise
+    /// the single Montgomery inversion across more points.
     pub batch_size: BatchSize,
     /// Number of shift variants per session.
     ///
@@ -188,6 +189,29 @@ pub struct Config {
     /// reduce the variant-set memory footprint at the cost of missing
     /// some small-scalar targets.
     pub variant_count: u32,
+    /// Optional inclusive-lower scalar bound for the sweep.
+    ///
+    /// `Some(n)` means "start the chunked sweep from `n` instead of from
+    /// `MIN_SEARCH_SCALAR`". Combined with `range_to`, scopes the entire
+    /// session to a single user-specified window without persisted
+    /// checkpoints (see ADR-0011).
+    pub range_from: Option<u64>,
+    /// Optional inclusive-upper scalar bound for the sweep.
+    ///
+    /// `Some(m)` means "stop the chunked sweep at `m`". Both `range_from`
+    /// and `range_to` must be `Some` or both `None`; partial sets are
+    /// rejected with `FindError::InvalidConfig` at builder time.
+    pub range_to: Option<u64>,
+    /// Optional Bitcoin mainnet target address (P2PKH 0x00 or P2SH 0x05).
+    ///
+    /// When `Some(addr)`, the orchestrator switches from variant-keyed
+    /// sweep to a hash40-keyed sweep over `range_from..=range_to`; the
+    /// candidate scalars' compressed-pubkey hash is compared against
+    /// `addr`. Note that the relationship between target and scalar is
+    /// iterated in the **range**, not inverted from the address: the
+    /// tool does not (and cannot) recover the private key from an
+    /// address without also specifying the candidate range.
+    pub target_address: Option<crate::address::Address40>,
 }
 
 impl Config {
@@ -230,7 +254,45 @@ impl Config {
             cache_points,
             batch_size: BatchSize::DEFAULT,
             variant_count: DEFAULT_VARIANT_COUNT,
+            range_from: None,
+            range_to: None,
+            target_address: None,
         }
+    }
+
+    /// Sets the explicit scalar range [`from`, `to`]. Both inclusive.
+    ///
+    /// Both must be provided and `from <= to`. `to` is also implicit by
+    /// the `u64` ceiling; sizes above `u64::MAX` are not representable.
+    ///
+    /// When `target_address` is also `Some`, the range scopes the hash40
+    /// sweep; when it's `None`, the range scopes the variant-keyed sweep.
+    ///
+    /// Returns `FindError::InvalidConfig` on validation failure.
+    pub fn try_with_range(mut self, from: u64, to: u64) -> Result<Self> {
+        if from > to {
+            return Err(FindError::InvalidConfig(format!(
+                "range_from ({from}) must be <= range_to ({to})"
+            )));
+        }
+        self.range_from = Some(from);
+        self.range_to = Some(to);
+        Ok(self)
+    }
+
+    /// Sets the optional target Bitcoin address (mainnet P2PKH or P2SH).
+    ///
+    /// When set, the orchestrator switches to the address-keyed sweep
+    /// mode. The `pubkey` field is still required syntactically (its
+    /// empty default is allowed in address mode and is replaced by a
+    /// dummy value at parse time) but it is unused for the hash40 path.
+    ///
+    /// Returns `FindError::InvalidAddress` if the address fails to
+    /// Base58Check decode or carries a non-`0x00`/`0x05` version byte.
+    pub fn try_with_target_address(mut self, addr: &str) -> Result<Self> {
+        let (_v, hash40) = crate::address::bitcoin_address_to_hash40(addr)?;
+        self.target_address = Some(hash40);
+        Ok(self)
     }
 
     /// Sets the batch size, returning the updated `Config`.
@@ -331,9 +393,12 @@ impl Config {
     /// assert!(bad.validate_fields().is_err());
     /// ```
     pub fn validate_fields(&self) -> Result<()> {
-        if self.pubkey.trim().is_empty() {
+        // Either a SEC1 pubkey OR an address target must be provided.
+        // (Address-targeted mode reuses the pubkey string as an unused
+        //  slot for backward-compat with the existing Config surface.)
+        if self.pubkey.trim().is_empty() && self.target_address.is_none() {
             return Err(FindError::InvalidPublicKey(
-                "Public key cannot be empty".to_string(),
+                "Public key cannot be empty (and no --address target was set)".to_string(),
             ));
         }
         Ok(())
@@ -369,6 +434,16 @@ impl Config {
     /// assert!(bad.validate_pubkey().is_err());
     /// ```
     pub fn validate_pubkey(&self) -> Result<()> {
+        // In address-targeted mode the pubkey string is empty by design.
+        if self.target_address.is_some() {
+            // Skip SEC1 parse but still surface the empty-pubkey invariant
+            // if the user wrote one explicitly (rather than relying on CLI
+            // default) — that's the only way to land here from main().
+            if !self.pubkey.trim().is_empty() {
+                crate::ecc::parse_pubkey(&self.pubkey)?;
+            }
+            return Ok(());
+        }
         if self.pubkey.trim().is_empty() {
             return Err(FindError::InvalidPublicKey(
                 "Public key cannot be empty".to_string(),
