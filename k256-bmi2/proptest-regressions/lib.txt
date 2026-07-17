@@ -1,7 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 62bc927f0d378e10836b84f8c7d2472de3eab684ebf2a3ce55c27246356dfd25 # shrinks to a = FieldElement5x52([0, 0, 0, 0, 1]), b = FieldElement5x52([0, 0, 0, 0, 1]), c = FieldElement5x52([0, 0, 0, 0, 274755])
