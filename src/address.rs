@@ -39,6 +39,19 @@ const VALID_VERSION_BYTES: &[u8] = b"\x00\x05";
 pub struct Address40(pub [u8; 20]);
 
 impl Address40 {
+    /// Full 40-character lower-case hex with NO leading-zero trimming.
+    /// Used by the address-keyed sweep to label the recovered scalar in
+    /// CLI output; matches the 40-char hash40 visual layout that humans
+    /// are used to seeing in Bitcoin tools.
+    pub fn to_hex_trimmed_padded(&self) -> String {
+        let mut s = String::with_capacity(40);
+        for &b in &self.0 {
+            use std::fmt::Write;
+            let _ = write!(s, "{b:02x}");
+        }
+        s
+    }
+
     /// Hex form used by `Display`: lower-case, no `0x`, leading zeros trimmed.
     pub fn to_hex_trimmed(&self) -> String {
         let bytes = self.0;
@@ -318,5 +331,24 @@ mod tests {
         let z = Address40::from_hex(full).unwrap();
         assert_eq!(z, Address40([0u8; 20]));
         assert_eq!(z.to_hex_trimmed(), "00");
+    }
+
+    /// `to_hex_trimmed_padded` returns the full 40-character form,
+    /// preserving any leading-zero bytes (typical of Bitcoin addresses
+    /// that start with `00` in the hash40).
+    #[test]
+    fn test_address40_padded_hex() {
+        let z = Address40([0u8; 20]);
+        assert_eq!(z.to_hex_trimmed_padded().len(), 40);
+        assert_eq!(z.to_hex_trimmed_padded(), "00".repeat(20));
+
+        let a = Address40([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        ]);
+        assert_eq!(a.to_hex_trimmed_padded().len(), 40);
+        assert_eq!(
+            a.to_hex_trimmed_padded(),
+            "0102030405060708090a0b0c0d0e0f1011121314"
+        );
     }
 }

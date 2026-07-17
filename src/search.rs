@@ -1116,6 +1116,156 @@ pub fn sweep_and_cache<W: CacheWriter>(
     Ok(match_once.into_inner())
 }
 
+/// Performs a hash40-targeted sweep over a scalar range.
+///
+/// For each scalar `d` in `[start, end]`, computes the compressed-pubkey
+/// hash160 of `d·G` and compares against `target`. On a match the recovered
+/// scalar `d` is returned (as a `SearchMatch` with `candidates = [d, n-d]`).
+///
+/// # Algorithm
+///
+/// - Bootstrap: `current = start·G` via [`ecc::scalar_mul_g`] (k256's
+///   `MulByGenerator::mul_by_generator` with precomputed-tables feature,
+///   ~15 µs on M3 Pro).
+/// - Per-step: `current += G` (8-field-mul mixed addition, ~110 ns).
+/// - Per-step post-process: derive compressed SEC1, hash160, byte-compare
+///   against `target`.
+///
+/// # Output
+///
+/// `Some(SearchMatch{...})` on the first match; `None` if the range is
+/// fully exhausted without a match.
+///
+/// # Algorithm notes
+///
+/// - Shares the `+ G` chain structure with [`sweep_parallel`] but
+///   replaces the per-point X-coordinate binary-search match with the
+///   cheaper (per-byte) hash40 compare.
+/// - Validated by ADR-0011. For very large ranges (e.g. `[2^70, 2^71)`)
+///   the expected work is `range_width` iterations and is documented
+///   there as a known impossibility at typical hardware budgets.
+pub fn sweep_address(
+    start: u64,
+    end: u64,
+    batch_size: u32,
+    target: crate::address::Address40,
+    variants: &'static [OffsetVariant],
+) -> Option<SearchMatch> {
+    use k256::elliptic_curve::Group;
+
+    let start = start.max(1);
+    if start > end {
+        return None;
+    }
+    let batch_size = batch_size as u64;
+
+    let range_len = end.saturating_sub(start).saturating_add(1);
+    let num_batches = if range_len == 0 {
+        0
+    } else {
+        (range_len - 1) / batch_size + 1
+    };
+    let sb_size = SUPER_BATCHES.min(num_batches);
+    let num_sb = if num_batches == 0 {
+        0
+    } else {
+        (num_batches - 1) / sb_size + 1
+    };
+    let found_flag = std::sync::atomic::AtomicBool::new(false);
+
+    (0..num_sb).into_par_iter().find_map_any(|sb_idx| {
+        let sb_start = sb_idx * sb_size;
+        let sb_end = (sb_start + sb_size).min(num_batches);
+        let sb_count = sb_end - sb_start;
+
+        let base_j = start.saturating_add(sb_start * batch_size);
+        let mut current = ecc::scalar_mul_g(&Scalar::from(base_j));
+
+        let mut bi = 0;
+        while bi < sb_count {
+            if found_flag.load(std::sync::atomic::Ordering::Acquire) {
+                return None;
+            }
+            let group_batch_count = (sb_count - bi).min(NORMALIZE_GROUP_BATCHES as u64);
+
+            // Walk the chain via the `+ G` add. Compare each step's
+            // hash160 against `target`. We do not store or post-process
+            // X-coordinates; the address path replaces the variant-keyed
+            // match entirely.
+            for gbi in 0..group_batch_count {
+                let abs_bi = bi + gbi;
+                let chunk_start = base_j + abs_bi * batch_size;
+                let chunk_end = (chunk_start.saturating_add(batch_size - 1)).min(end);
+                let count = (chunk_end.saturating_sub(chunk_start).saturating_add(1)) as usize;
+                for c in 0..count {
+                    let j = chunk_start + c as u64;
+                    if bool::from(current.is_identity()) {
+                        // Identity: no compressed encoding, skip.
+                        continue;
+                    }
+                    if hash160_matches(&current, &target) {
+                        found_flag.store(true, std::sync::atomic::Ordering::Release);
+                        return Some(make_address_match(j, target, variants));
+                    }
+                    if c + 1 < count {
+                        current += ecc::generator();
+                    }
+                }
+            }
+            bi += group_batch_count;
+        }
+        None
+    })
+}
+
+/// Build a [`SearchMatch`] for an address-keyed hit.
+///
+/// `n - d` is the additive inverse modulo the curve order — the
+/// "partner" Y-parity share of the same hash40 target. Reported so
+/// that downstream callers see a `[Scalar; 2]` shape consistent with
+/// the variant-keyed sweep's output.
+fn make_address_match(
+    d: u64,
+    target: crate::address::Address40,
+    _variants: &'static [OffsetVariant],
+) -> SearchMatch {
+    use k256::elliptic_curve::PrimeField;
+    let d_scalar = Scalar::from(d);
+    // secp256k1 curve order n, big-endian.
+    let n_bytes: [u8; 32] = [
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36,
+        0x41, 0x41,
+    ];
+    let n_scalar = Option::<Scalar>::from(Scalar::from_repr(n_bytes.into()))
+        .expect("curve order bytes are canonical");
+    let alt_scalar = n_scalar.sub(&d_scalar);
+
+    // First 4 bytes of the address hash -> 8 hex chars. Used as the
+    // offset_decimal label so the address path is visible in CLI output.
+    // Box::leak'd because SearchMatch::new requires &'static str; the
+    // one-time leak here is the same pattern used for variant metadata.
+    let offset: &'static str =
+        Box::leak(format!("0x{}", target.to_hex_trimmed_padded()).into_boxed_str());
+    SearchMatch::new("address/d", offset, d, [d_scalar, alt_scalar])
+}
+
+/// Compute RIPEMD-160(SHA-256(compressed SEC1(point))) and compare to `target`.
+/// Returns true on equality.
+fn hash160_matches(point: &ProjectivePoint, target: &crate::address::Address40) -> bool {
+    use k256::elliptic_curve::sec1::ToEncodedPoint;
+    use sha2::Digest;
+    let encoded = point.to_encoded_point(true);
+    let mut sha = sha2::Sha256::new();
+    sha.update(encoded.as_bytes());
+    let sha_out = sha.finalize();
+    let mut hasher = ripemd::Ripemd160::new();
+    hasher.update(sha_out);
+    let h160 = hasher.finalize();
+    // GenericArray derefs to `&[u8]`; compare slices directly. No `.as_slice()`.
+    h160[..] == target.0[..]
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
