@@ -131,6 +131,13 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
     config.validate_fields()?;
     config.validate_pubkey()?;
 
+    // Address-targeted discovery mode: skip variant construction entirely.
+    // The sweep is over the user-specified range with hash40 comparison
+    // instead of X-coordinate comparison.
+    if let Some(target) = config.target_address {
+        return run_address_mode(config, target);
+    }
+
     let target_p = ecc::parse_pubkey(&config.pubkey)?;
     let variants = search::generate_variants(&target_p);
     let variant_x_bytes = search::compute_variant_x_bytes(&target_p);
@@ -257,4 +264,34 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
     }
 
     Ok(None)
+}
+
+/// Runs the address-targeted discovery mode (a single-pass sweep that
+/// compares compressed-pubkey hash40 against the user's target address).
+///
+/// Replaces the variant-keyed path entirely. The range is whatever
+/// `config.range_from..=config.range_to` is; defaults to `[MIN_SEARCH_SCALAR,
+/// MAX_SEARCH]` when both are `None`.
+///
+/// No checkpoints are persisted in this mode: the search is a
+/// one-shot question over a fixed range. No cache file is generated.
+/// No binary file is reserved on disk. All output is a single
+/// `Some(SearchMatch)` on hit or `Ok(None)` on clean exit.
+fn run_address_mode(
+    config: &Config,
+    target: crate::address::Address40,
+) -> Result<Option<SearchMatch>> {
+    let start = config
+        .range_from
+        .unwrap_or(crate::config::MIN_SEARCH_SCALAR);
+    let end = config.range_to.unwrap_or(crate::config::MAX_SEARCH);
+    info!("address mode: target={} range=[{}, {}]", target, start, end);
+    let variants = search::generate_variants(&ecc::generator());
+    Ok(search::sweep_address(
+        start,
+        end,
+        config.batch_size.get(),
+        target,
+        variants,
+    ))
 }

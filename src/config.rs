@@ -434,14 +434,11 @@ impl Config {
     /// assert!(bad.validate_pubkey().is_err());
     /// ```
     pub fn validate_pubkey(&self) -> Result<()> {
-        // In address-targeted mode the pubkey string is empty by design.
+        // In address-targeted mode the pubkey string is unused; skip
+        // the SEC1 parse unconditionally. The CLI placeholder
+        // "[address mode]" is not a valid hex string and would otherwise
+        // trip parse_pubkey.
         if self.target_address.is_some() {
-            // Skip SEC1 parse but still surface the empty-pubkey invariant
-            // if the user wrote one explicitly (rather than relying on CLI
-            // default) — that's the only way to land here from main().
-            if !self.pubkey.trim().is_empty() {
-                crate::ecc::parse_pubkey(&self.pubkey)?;
-            }
             return Ok(());
         }
         if self.pubkey.trim().is_empty() {
@@ -502,6 +499,17 @@ mod tests {
         assert!(empty.validate_pubkey().is_err());
         let ws = Config::new("   ", "/tmp", false);
         assert!(ws.validate_pubkey().is_err());
+    }
+
+    /// Verifies that `validate_pubkey` accepts any string in address
+    /// mode (the pubkey field is unused there).
+    #[test]
+    fn test_config_validate_pubkey_skipped_in_address_mode() {
+        let cfg = Config::new("[address mode]", "/tmp", false)
+            .try_with_target_address("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
+            .unwrap();
+        cfg.validate_pubkey()
+            .expect("address mode must skip pubkey parse");
     }
 
     /// Verifies that `BatchSize::new` accepts legal values.

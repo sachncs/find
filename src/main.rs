@@ -20,6 +20,18 @@
 //! 5. Render the [`find::search::SearchMatch`] to stdout, or print a
 //!    "no match" message if the entire scalar space was exhausted.
 //!
+//! # Two discovery modes
+//!
+//! - `--pubkey <hex>` (default): variant-keyed sweep (X-coordinate
+//!   match). Backwards compatible; the user's literal `1PWo3JeB...`
+//!   example was an address-format string and decodes to a hash40,
+//!   not a SEC1 pubkey, so this mode will reject it.
+//! - `--address <base58> --from <scalar> --to <scalar>`: address-keyed
+//!   sweep (hash40 match over a scalar range).
+//!
+//! The two modes are mutually exclusive (clap-level). The address path
+//! is the only one that doesn't require a SEC1 pubkey at startup.
+//!
 //! # Errors
 //!
 //! Errors from the orchestrator propagate as [`anyhow::Error`] and produce a
@@ -60,8 +72,33 @@ use tracing::{info, info_span};
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// HEX-encoded SEC1 public key (compressed or uncompressed).
-    #[arg(short, long)]
-    pubkey: String,
+    ///
+    /// Mutually exclusive with `--address`. Required unless `--address`
+    /// is set (the engine rejects `pubkey`-empty + no target-address at
+    /// validate_fields time when in pubkey mode).
+    #[arg(short, long, conflicts_with = "address")]
+    pubkey: Option<String>,
+
+    /// Base58 Bitcoin mainnet address (P2PKH `0x00` or P2SH `0x05`).
+    ///
+    /// Switches the engine to address-discovery mode: a hash40-targeted
+    /// sweep over the user-specified `[--from, --to]` range. Mutually
+    /// exclusive with `--pubkey`.
+    #[arg(short = 'a', long = "address", conflicts_with = "pubkey")]
+    address: Option<String>,
+
+    /// Inclusive scalar lower bound (decimal or hex with `0x` prefix).
+    ///
+    /// Default (when `--address` is set, no `--from`): use
+    /// `MIN_SEARCH_SCALAR` (= 1).
+    #[arg(long, value_name = "HEX_OR_DEC")]
+    from: Option<String>,
+
+    /// Inclusive scalar upper bound (decimal or hex with `0x` prefix).
+    ///
+    /// Default (when `--address` is set, no `--to`): use `u64::MAX`.
+    #[arg(long, value_name = "HEX_OR_DEC")]
+    to: Option<String>,
 
     /// Data and checkpoint root directory.
     #[arg(short, long, default_value = "data")]
@@ -74,6 +111,8 @@ struct Args {
     /// Persist jG points to binary caches for multi-pubkey reuse.
     ///
     /// WARNING: Consumes approximately 32GB per billion points.
+    /// Auto-disabled when `--address` is set (cache stores X-coords;
+    /// the address sweep does not produce them).
     #[arg(short, long, default_value_t = false)]
     cache_points: bool,
 
@@ -90,8 +129,26 @@ struct Args {
     /// 512 is the documented default. Smaller values reduce the
     /// variant-set memory footprint at the cost of missing some
     /// small-scalar targets.
+    /// Ignored in address mode (no variant table is used).
     #[arg(long, default_value_t = find::config::DEFAULT_VARIANT_COUNT)]
     variants: u32,
+}
+
+/// Parse a CLI hex-or-dec string into a u64. Accepts `0x...`, `0X...`,
+/// or a plain decimal integer. Empty / unparseable returns an error
+/// string that becomes an anyhow message.
+fn parse_hex_or_dec(s: &str) -> anyhow::Result<u64> {
+    let trimmed = s.trim();
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        u64::from_str_radix(hex, 16).map_err(|e| anyhow::anyhow!("hex {trimmed:?}: {e}"))
+    } else {
+        trimmed
+            .parse::<u64>()
+            .map_err(|e| anyhow::anyhow!("decimal {trimmed:?}: {e}"))
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -105,14 +162,55 @@ fn main() -> anyhow::Result<()> {
 
     info!("Initializing find tool v{}", env!("CARGO_PKG_VERSION"));
 
-    // Build the config. The try_with_* builders return FindError on
-    // out-of-range values; we propagate as a non-zero exit code via
-    // anyhow.
-    let config = Config::new(args.pubkey, args.output_dir, args.cache_points)
+    // Build the config. The two entry points share the same builders:
+    //
+    //   - pubkey mode (default): Config::new(pubkey, ...). The pubkey
+    //     field is non-empty and required.
+    //   - address mode: we construct Config with a placeholder pubkey
+    //     (the orchestrator ignores it) and feed --address through
+    //     try_with_target_address.
+    //
+    // Both branches feed the same set of try_with_* builders afterward
+    // and the validate_* checks at the orchestrator entry point decide
+    // whether the pubkey string is required.
+    let mut config_builder = if let Some(addr_str) = args.address {
+        Config::new(
+            "[address mode]".to_string(),
+            args.output_dir,
+            args.cache_points,
+        )
+        .try_with_target_address(&addr_str)
+        .map_err(|e| anyhow::anyhow!("--address: {e}"))?
+    } else {
+        let pk = args.pubkey.clone().ok_or_else(|| {
+            anyhow::anyhow!("--pubkey is required in pubkey mode (or pass --address)")
+        })?;
+        Config::new(pk, args.output_dir, args.cache_points)
+    };
+
+    config_builder = config_builder
         .try_with_batch_size(args.batch_size)
         .map_err(|e| anyhow::anyhow!("--batch-size: {e}"))?
         .try_with_variant_count(args.variants)
         .map_err(|e| anyhow::anyhow!("--variants: {e}"))?;
+
+    if args.from.is_some() || args.to.is_some() {
+        let from_str = args
+            .from
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--from provided without --to"))?;
+        let to_str = args
+            .to
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--to provided without --from"))?;
+        let from = parse_hex_or_dec(from_str)?;
+        let to = parse_hex_or_dec(to_str)?;
+        config_builder = config_builder
+            .try_with_range(from, to)
+            .map_err(|e| anyhow::anyhow!("--from/--to: {e}"))?;
+    }
+
+    let config = config_builder;
 
     let start = Instant::now();
     match orchestrator::run(&config)? {
@@ -163,10 +261,11 @@ mod tests {
     #[test]
     fn test_args_parse_minimal() {
         let args = Args::parse_from(["find", "--pubkey", "abc"]);
-        assert_eq!(args.pubkey, "abc");
+        assert_eq!(args.pubkey.as_deref(), Some("abc"));
         assert_eq!(args.output_dir, "data");
         assert_eq!(args.log_dir, "logs");
         assert!(!args.cache_points);
+        assert!(args.address.is_none());
     }
 
     /// Verifies that [`Args`] parses with all flags set.
@@ -186,7 +285,7 @@ mod tests {
             "--variants",
             "256",
         ]);
-        assert_eq!(args.pubkey, "deadbeef");
+        assert_eq!(args.pubkey.as_deref(), Some("deadbeef"));
         assert_eq!(args.output_dir, "/tmp/out");
         assert_eq!(args.log_dir, "/tmp/log");
         assert!(args.cache_points);
