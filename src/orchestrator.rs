@@ -169,7 +169,7 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
     let progress = Progress::new();
 
     loop {
-        let chunk_start = current_j.saturating_add(1).max(MIN_SEARCH_SCALAR);
+        let chunk_start: u64 = current_j.saturating_add(1).max(MIN_SEARCH_SCALAR);
         // Detect overflow: `saturating_add` returns `u64::MAX` on overflow,
         // so the comparison `chunk_end < current_j` fires only when we've
         // reached the end of the 64-bit scalar space and cannot extend.
@@ -199,7 +199,7 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
         //       discarding the work after the segment.
         let sweep_result = if cache_path.exists() {
             info!("Cache hit: {}", cache_path.display());
-            persistence::sweep_cached(&index, &cache_path, chunk_start)?
+            persistence::sweep_cached(&index, &cache_path, chunk_start.into())?
         } else if config.cache_points {
             info!("Cache miss. Precomputing chunk...");
             let writer = persistence::BinaryCacheWriter::create(&cache_path)?;
@@ -220,7 +220,7 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
                 // cached-sweep pass on the just-written file.
                 early
             } else {
-                persistence::sweep_cached(&index, &cache_path, chunk_start)?
+                persistence::sweep_cached(&index, &cache_path, chunk_start.into())?
             }
         } else {
             info!("Cache miss. Running parallel sweep...");
@@ -257,7 +257,7 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
             info!(current_j = current_j, "audit_boundary");
         }
 
-        if current_j == MAX_SEARCH {
+        if current_j as u128 == MAX_SEARCH {
             info!("Search space exhausted.");
             break;
         }
@@ -281,9 +281,9 @@ fn run_address_mode(
     config: &Config,
     target: crate::address::Address40,
 ) -> Result<Option<SearchMatch>> {
-    let start = config
+    let start: u128 = config
         .range_from
-        .unwrap_or(crate::config::MIN_SEARCH_SCALAR);
+        .unwrap_or(u128::from(crate::config::MIN_SEARCH_SCALAR));
     let end = config.range_to.unwrap_or(crate::config::MAX_SEARCH);
     info!("address mode: target={} range=[{}, {}]", target, start, end);
     let variants = search::generate_variants(&ecc::generator());

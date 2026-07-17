@@ -275,7 +275,7 @@ impl VariantIndex {
     /// fetched on a match via `order[idx] -> variants[order[idx]]`. Cold-
     /// storage indirection on miss keeps the hot loop in L1.
     #[inline(always)]
-    pub fn match_x(&self, test_x: &[u8; 32], j: u64) -> Option<SearchMatch> {
+    pub fn match_x(&self, test_x: &[u8; 32], j: u128) -> Option<SearchMatch> {
         let idx = self.keys.binary_search_by(|probe| probe.cmp(test_x)).ok()?;
         let var_idx = self.order[idx];
         let var = &self.variants[var_idx];
@@ -332,7 +332,11 @@ pub struct SearchMatch {
     /// The decimal string representation of the variant's unreduced offset.
     pub offset: &'static str,
     /// The scalar \(j\) at which the match occurred.
-    pub j: u64,
+    ///
+    /// **Type: `u128`** — widened from `u64` so the address-discovery
+    /// slice can recover candidate scalars above `2^64 - 1`. Variant-
+    /// mode sweeps still produce `u64`-sized values here.
+    pub j: u128,
     /// Candidate private keys `[V + j, V - j] (mod n)` as [`Scalar`].
     ///
     /// Two-element array by construction.
@@ -361,7 +365,12 @@ impl SearchMatch {
     /// assert_eq!(m.j, 2);
     /// assert_eq!(m.label, "2^0");
     /// ```
-    pub fn new(label: &'static str, offset: &'static str, j: u64, candidates: [Scalar; 2]) -> Self {
+    pub fn new(
+        label: &'static str,
+        offset: &'static str,
+        j: u128,
+        candidates: [Scalar; 2],
+    ) -> Self {
         Self {
             label,
             offset,
@@ -883,7 +892,7 @@ pub fn sweep_parallel(
                 let count = (chunk_end.saturating_sub(chunk_start).saturating_add(1)) as usize;
                 for i in 0..count {
                     let affine = &group_affines_buf[offset + i];
-                    let j = chunk_start + i as u64;
+                    let j: u128 = u128::from(chunk_start) + i as u128;
                     let mut x_bytes = [0u8; 32];
                     x_bytes.copy_from_slice(affine.x().as_ref());
                     if let Some(m) = index.match_x(&x_bytes, j) {
@@ -1076,7 +1085,7 @@ pub fn sweep_and_cache<W: CacheWriter>(
 
                     for i in 0..count {
                         let affine = &group_affines_buf[offset + i];
-                        let j = chunk_start + i as u64;
+                        let j: u128 = u128::from(chunk_start) + i as u128;
                         let mut x_bytes = [0u8; 32];
                         x_bytes.copy_from_slice(affine.x().as_ref());
 
@@ -1136,6 +1145,14 @@ pub fn sweep_and_cache<W: CacheWriter>(
 /// `Some(SearchMatch{...})` on the first match; `None` if the range is
 /// fully exhausted without a match.
 ///
+/// # Scalar range
+///
+/// `start` and `end` are `u128`. This covers the user's
+/// `0x400000000000000000:0x7fffffffffffffffff` style inputs (a 2-bit
+/// wide window above `2^64 - 1`). The chain loop advances by `+ G` via
+/// `k256::Scalar::from(u128)` on every step; `Scalar::from(u128)` is
+/// provided by k256 0.13.
+///
 /// # Algorithm notes
 ///
 /// - Shares the `+ G` chain structure with [`sweep_parallel`] but
@@ -1145,8 +1162,8 @@ pub fn sweep_and_cache<W: CacheWriter>(
 ///   the expected work is `range_width` iterations and is documented
 ///   there as a known impossibility at typical hardware budgets.
 pub fn sweep_address(
-    start: u64,
-    end: u64,
+    start: u128,
+    end: u128,
     batch_size: u32,
     target: crate::address::Address40,
     variants: &'static [OffsetVariant],
@@ -1157,81 +1174,74 @@ pub fn sweep_address(
     if start > end {
         return None;
     }
-    let batch_size = batch_size as u64;
+    let batch_size: u128 = batch_size as u128;
+    if batch_size == 0 {
+        return None;
+    }
 
     let range_len = end.saturating_sub(start).saturating_add(1);
-    let num_batches = if range_len == 0 {
-        0
-    } else {
-        (range_len - 1) / batch_size + 1
-    };
-    let sb_size = SUPER_BATCHES.min(num_batches);
-    let num_sb = if num_batches == 0 {
-        0
-    } else {
-        (num_batches - 1) / sb_size + 1
-    };
+    if range_len == 0 {
+        return None;
+    }
+    let num_batches = (range_len - 1) / batch_size + 1;
+
+    // SUPER_BATCHES defaults to 256 (`u64`). The outer `par_iter` needs
+    // a `u64` index — saturate to `u64::MAX` if the user gives a range
+    // whose super-batch count overflows u64 (e.g. >2^64 scalars). The
+    // inner per-batch math stays in `u128`.
+    let sb_size_u128: u128 = u128::from(SUPER_BATCHES);
+    let sb_size: u128 = num_batches.min(sb_size_u128);
+    let num_sb: u128 = (num_batches - 1) / sb_size + 1;
+    let num_sb_u64: u64 = u64::try_from(num_sb).unwrap_or(u64::MAX);
     let found_flag = std::sync::atomic::AtomicBool::new(false);
 
-    (0..num_sb).into_par_iter().find_map_any(|sb_idx| {
-        let sb_start = sb_idx * sb_size;
-        let sb_end = (sb_start + sb_size).min(num_batches);
-        let sb_count = sb_end - sb_start;
+    (0..num_sb_u64).into_par_iter().find_map_any(|sb_idx| {
+        // u64 -> u128 conversions for the loop body. Rayon enforces `sb_idx
+        // < num_sb_u64`, and `num_sb_u64 <= u64::MAX`.
+        let sb_idx_u128: u128 = u128::from(sb_idx);
+        let sb_start_batches = sb_idx_u128 * sb_size;
+        let sb_end_batches = (sb_start_batches + sb_size).min(num_batches);
+        let sb_count_batches = sb_end_batches - sb_start_batches;
 
-        let base_j = start.saturating_add(sb_start * batch_size);
+        // Bootstrap this super-batch's first chain point.
+        let base_j = start.saturating_add(sb_start_batches * batch_size);
         let mut current = ecc::scalar_mul_g(&Scalar::from(base_j));
 
-        let mut bi = 0;
-        while bi < sb_count {
+        // Walk each batch within the super-batch. Each batch consumes
+        // exactly `batch_size` chain steps except the last batch of the
+        // range, which may be partial.
+        let mut batch_idx: u128 = 0;
+        while batch_idx < sb_count_batches {
             if found_flag.load(std::sync::atomic::Ordering::Acquire) {
                 return None;
             }
-            let group_batch_count = (sb_count - bi).min(NORMALIZE_GROUP_BATCHES as u64);
+            let abs_batch = sb_start_batches + batch_idx;
+            let chunk_start = start.saturating_add(abs_batch * batch_size);
+            let chunk_end = if chunk_start.saturating_add(batch_size - 1) <= end {
+                chunk_start + batch_size - 1
+            } else {
+                end
+            };
+            let count = chunk_end.saturating_sub(chunk_start).saturating_add(1);
 
-            // Walk the chain via the `+ G` add. Compare each step's
-            // hash160 against `target`. We do not store or post-process
-            // X-coordinates; the address path replaces the variant-keyed
-            // match entirely.
-            for gbi in 0..group_batch_count {
-                let abs_bi = bi + gbi;
-                let chunk_start = base_j + abs_bi * batch_size;
-                let chunk_end = (chunk_start.saturating_add(batch_size - 1)).min(end);
-                let count = (chunk_end.saturating_sub(chunk_start).saturating_add(1)) as usize;
-                for c in 0..count {
-                    let j = chunk_start + c as u64;
-                    if bool::from(current.is_identity()) {
-                        // Identity: no compressed encoding, skip.
-                        continue;
-                    }
-                    if hash160_matches(&current, &target) {
-                        found_flag.store(true, std::sync::atomic::Ordering::Release);
-                        return Some(make_address_match(j, target, variants));
-                    }
-                    if c + 1 < count {
-                        current += ecc::generator();
-                    }
+            let mut c: u128 = 0;
+            while c < count {
+                let j = chunk_start + c;
+                if !bool::from(current.is_identity()) && hash160_matches(&current, &target) {
+                    found_flag.store(true, std::sync::atomic::Ordering::Release);
+                    return Some(make_address_match(j, target, variants));
+                }
+                c = c.saturating_add(1);
+                if c < count {
+                    current += ecc::generator();
                 }
             }
-            bi += group_batch_count;
+            batch_idx = batch_idx.saturating_add(1);
         }
         None
     })
 }
 
-/// Build a [`SearchMatch`] for an address-keyed hit.
-///
-/// `n - d` is the additive inverse modulo the curve order — the
-/// "partner" Y-parity share of the same hash40 target. Reported so
-/// that downstream callers see a `[Scalar; 2]` shape consistent with
-/// the variant-keyed sweep's output.
-/// Build a [`SearchMatch`] for an address-keyed hit.
-///
-/// `-d` (additive inverse) is the "partner" Y-parity share of the same
-/// hash40 target. Reported so downstream callers see a `[Scalar; 2]`
-/// shape consistent with the variant-keyed sweep's output.
-///
-/// Note: we use `negate()` instead of subtracting from a fixed `n`
-/// because `n` itself is not representable as a scalar (it's the
 /// Build a [`SearchMatch`] for an address-keyed hit.
 ///
 /// `-d` (additive inverse) is the "partner" Y-parity share of the same
@@ -1243,7 +1253,7 @@ pub fn sweep_address(
 /// modulus; `Scalar::from_repr(n_bytes)` returns None because `n`
 /// reduces to 0 in F_n).
 fn make_address_match(
-    d: u64,
+    d: u128,
     target: crate::address::Address40,
     _variants: &'static [OffsetVariant],
 ) -> SearchMatch {

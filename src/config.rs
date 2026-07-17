@@ -41,8 +41,16 @@ pub const TRILLION: u64 = 1_000_000_000_000;
 /// Each chunk corresponds to ~32 GB of binary cache on disk.
 pub const DEFAULT_CACHE_CHUNK_SIZE: u64 = 1_000_000_000;
 
-/// Theoretical maximum search boundary for 64-bit scalars.
-pub const MAX_SEARCH: u64 = u64::MAX;
+/// Theoretical maximum search boundary for scalars.
+///
+/// `u128::MAX` covers the entire Secp256k1 scalar field
+/// (`2^256 mod n < 2^128` doesn't quite hold — `n < 2^256`, so the largest
+/// canonical scalar in the field is `n - 1 < 2^256`, which is bigger than
+/// `u128::MAX = 2^128 - 1`). The address-discovery slice uses `u128` so
+/// the user's `0x4000…0000` style inputs are accepted and the chain
+/// loop can advance by `+ G` past `u64::MAX`. Very-near-`2^128` ranges
+/// are still rejected at parse time via `u128::from_str_radix`.
+pub const MAX_SEARCH: u128 = u128::MAX;
 
 /// Minimum non-zero search scalar.
 ///
@@ -195,13 +203,19 @@ pub struct Config {
     /// `MIN_SEARCH_SCALAR`". Combined with `range_to`, scopes the entire
     /// session to a single user-specified window without persisted
     /// checkpoints (see ADR-0011).
-    pub range_from: Option<u64>,
+    ///
+    /// **Type: `u128`.** Values above `2^64 - 1` are accepted so the
+    /// `--address` path can handle very-wide user ranges such as the
+    /// form-template input `0x400000000000000000:0x7fffffffffffffffff`.
+    pub range_from: Option<u128>,
     /// Optional inclusive-upper scalar bound for the sweep.
     ///
     /// `Some(m)` means "stop the chunked sweep at `m`". Both `range_from`
     /// and `range_to` must be `Some` or both `None`; partial sets are
     /// rejected with `FindError::InvalidConfig` at builder time.
-    pub range_to: Option<u64>,
+    ///
+    /// **Type: `u128`.** See [`range_from`](Self::range_from) for rationale.
+    pub range_to: Option<u128>,
     /// Optional Bitcoin mainnet target address (P2PKH 0x00 or P2SH 0x05).
     ///
     /// When `Some(addr)`, the orchestrator switches from variant-keyed
@@ -263,13 +277,16 @@ impl Config {
     /// Sets the explicit scalar range [`from`, `to`]. Both inclusive.
     ///
     /// Both must be provided and `from <= to`. `to` is also implicit by
-    /// the `u64` ceiling; sizes above `u64::MAX` are not representable.
+    /// the `u128` scalar range; values above `u64::MAX = 2^64 - 1`
+    /// are accepted so the address-discovery slice can sweep
+    /// user's `0x4…` style inputs (see ADR-0011).
     ///
     /// When `target_address` is also `Some`, the range scopes the hash40
-    /// sweep; when it's `None`, the range scopes the variant-keyed sweep.
+    /// sweep; when it's `None`, the range scopes the variant-keyed sweep
+    /// (which still uses `u64` internally — see ADR-0011).
     ///
     /// Returns `FindError::InvalidConfig` on validation failure.
-    pub fn try_with_range(mut self, from: u64, to: u64) -> Result<Self> {
+    pub fn try_with_range(mut self, from: u128, to: u128) -> Result<Self> {
         if from > to {
             return Err(FindError::InvalidConfig(format!(
                 "range_from ({from}) must be <= range_to ({to})"

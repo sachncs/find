@@ -398,7 +398,7 @@ const CACHED_SWEEP_BUF_SIZE: usize = 32 * 1024;
 pub fn sweep_cached(
     index: &VariantIndex,
     cache_path: &Path,
-    start_j: u64,
+    start_j: u128,
 ) -> Result<Option<SearchMatch>> {
     let mut file = File::open(cache_path).map_err(FindError::Io)?;
     let metadata = file.metadata().map_err(FindError::Io)?;
@@ -546,7 +546,7 @@ mod tests {
         let cache_path = dir.path().join("empty.bin");
         std::fs::write(&cache_path, []).unwrap();
 
-        let result = sweep_cached(&index, &cache_path, 0);
+        let result = sweep_cached(&index, &cache_path, 0u128);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -563,7 +563,7 @@ mod tests {
         let cache_path = dir.path().join("corrupted.bin");
         std::fs::write(&cache_path, vec![0u8; 31]).unwrap();
 
-        let result = sweep_cached(&index, &cache_path, 0);
+        let result = sweep_cached(&index, &cache_path, 0u128);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("not a multiple of 32"));
@@ -593,7 +593,7 @@ mod tests {
         cache_data.extend_from_slice(&x_1); // entry 1 -> j=2
         std::fs::write(&cache_path, &cache_data).unwrap();
 
-        let result = sweep_cached(&index, &cache_path, 1).unwrap();
+        let result = sweep_cached(&index, &cache_path, 1u128).unwrap();
         let m = result.expect("Should have found a match at j=1");
 
         assert_eq!(m.j, 1, "Should match at j=1");

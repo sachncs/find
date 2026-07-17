@@ -65,7 +65,7 @@ fn bench_sweep() {
         let m = search::sweep_parallel(&index, sweep_start, sweep_count, 32);
         std::hint::black_box(&index);
         if let Some(ref x) = m {
-            sink = sink.wrapping_add(x.j);
+            sink = sink.wrapping_add(x.j.try_into().unwrap_or(u64::MAX));
         }
     }
     let elapsed = start.elapsed();
@@ -114,7 +114,7 @@ fn bench_orchestrator() {
         let r = find::orchestrator::run(&config);
         std::hint::black_box(&config);
         if let Ok(Some(ref m)) = r {
-            sink = sink.wrapping_add(m.j);
+            sink = sink.wrapping_add(u64::try_from(m.j).unwrap_or(u64::MAX));
         }
     }
     let elapsed = start.elapsed();

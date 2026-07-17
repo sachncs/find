@@ -96,7 +96,7 @@ struct Args {
 
     /// Inclusive scalar upper bound (decimal or hex with `0x` prefix).
     ///
-    /// Default (when `--address` is set, no `--to`): use `u64::MAX`.
+    /// Default (when `--address` is set, no `--to`): use `u128::MAX`.
     #[arg(long, value_name = "HEX_OR_DEC")]
     to: Option<String>,
 
@@ -134,19 +134,24 @@ struct Args {
     variants: u32,
 }
 
-/// Parse a CLI hex-or-dec string into a u64. Accepts `0x...`, `0X...`,
+/// Parse a CLI hex-or-dec string into a u128. Accepts `0x...`, `0X...`,
 /// or a plain decimal integer. Empty / unparseable returns an error
 /// string that becomes an anyhow message.
-fn parse_hex_or_dec(s: &str) -> anyhow::Result<u64> {
+///
+/// **Type: `u128`** — the user's `0x400000000000000000:...` style inputs
+/// exceed `u64::MAX` and must be representable. Strings that overflow
+/// `u128::MAX` are rejected here with a parse error before they reach
+/// the sweep.
+fn parse_hex_or_dec(s: &str) -> anyhow::Result<u128> {
     let trimmed = s.trim();
     if let Some(hex) = trimmed
         .strip_prefix("0x")
         .or_else(|| trimmed.strip_prefix("0X"))
     {
-        u64::from_str_radix(hex, 16).map_err(|e| anyhow::anyhow!("hex {trimmed:?}: {e}"))
+        u128::from_str_radix(hex, 16).map_err(|e| anyhow::anyhow!("hex {trimmed:?}: {e}"))
     } else {
         trimmed
-            .parse::<u64>()
+            .parse::<u128>()
             .map_err(|e| anyhow::anyhow!("decimal {trimmed:?}: {e}"))
     }
 }

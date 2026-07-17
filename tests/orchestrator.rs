@@ -313,7 +313,7 @@ fn test_orchestrator_address_mode_finds_small_scalar() {
         match_.j
     );
     assert_eq!(match_.label, "address/d");
-    assert_eq!(match_.j, d);
+    assert_eq!(match_.j, u128::from(d));
     eprintln!(
         "address-mode d=5 found in {:?} ({} candidates)",
         elapsed,
