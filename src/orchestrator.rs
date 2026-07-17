@@ -244,8 +244,10 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
 
         // 32 × TRILLION = 32 chunks of DEFAULT_CACHE_CHUNK_SIZE (1B) scalars
         // each. Useful as a coarse-grained audit-breadcrumb in long runs.
+        // Structured fields so downstream log aggregation can graph the
+        // rate of progress without regex parsing.
         if current_j > 0 && current_j % (32 * TRILLION) == 0 {
-            info!("Audit boundary: 32 trillion steps reached.");
+            info!(current_j = current_j, "audit_boundary");
         }
 
         if current_j == MAX_SEARCH {
