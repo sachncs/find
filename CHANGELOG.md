@@ -146,6 +146,22 @@ commit and its commit timestamp.
 
 ### Changed
 
+- **Fixed-base scalar multiplication now uses k256's precomputed
+  generator table** (`perf(ecc): use precomputed-tables for fixed-base
+  scalar mul`). The `*` operator on `ProjectivePoint` routes through
+  `lincomb_ext` and ignores `precomputed-tables`; switching to
+  `MulByGenerator::mul_by_generator` wires in the 33-entry Radix16
+  lookup table that the feature gates. Measured on M3 Pro (opt-level=3,
+  lto=fat, criterion 100 samples):
+  - `plus_g_chain/chain_32_plus_g`: 33.78 µs → 18.98 µs (−44 %, 1.78×)
+  - `plus_g_chain/naive_32_scalar_muls`: 919.88 µs → 428.18 µs
+    (−54 %, 2.15×)
+  - `end_to_end_small_scalar_12345`: ~5.27 ms → 1.985 ms (~2.65×)
+
+  End-to-end throughput on the cold-start sweep path is now ~5 M
+  scalars/sec on Apple silicon. Behavior is bit-identical; when the
+  feature is off, `mul_by_generator` falls back to
+  `Self::generator() * scalar`, so this is a pure perf change.
 - **Inner-loop cost breakdown** in `docs/performance.md` corrected. The
   bootstrap scalar multiplication is ~54 % of per-batch ECC work (not
   ~80 % as previously documented); the `+ G` chain accounts for ~46 %.

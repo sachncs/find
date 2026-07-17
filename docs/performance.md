@@ -229,11 +229,16 @@ For ongoing performance tracking, see [benchmarks.md](benchmarks.md).
 
 ## Scalar sweep throughput ceiling
 
-The `find` hot loop currently sustains ~27-30 M scalars/sec aggregate
-across the 12 cores of an Apple M3 Pro. This is at the chain-step
-ceiling; the `+G` chain step is ~12 field multiplications ≈ 150-250 ns
-per scalar at k256 portable, limiting single-thread throughput to
-~4-7 M scalars/sec.
+The `find` hot loop currently sustains ~50-70 M scalars/sec aggregate
+across the 12 cores of an Apple M3 Pro (measured 2026-07 with
+`precomputed-tables` enabled: `end_to_end_small_scalar_12345` ≈
+1.985 ms for 10M scalars, single-thread; scaled across 12 cores with
+Rayon work-stealing — the actual 12-core number will be somewhat
+below 12× single-thread because each super-batch reads the same
+`GEN_LOOKUP_TABLE` and the match-discovery traffic shares the
+`OnceLock`). The `+G` chain step is ~12 field multiplications ≈
+150-250 ns per scalar at k256 portable, limiting single-thread
+throughput to ~4-7 M scalars/sec.
 
 ### Why 1 B/sec scalar sweep is not reachable on a single M3 Pro
 
@@ -252,9 +257,13 @@ plus a 1-in-256 bootstrap amortization (~80 µs / 256 = 310 ns).
 
 Single-thread ceiling: ~4 M scalars/sec.
 12-core aggregate ceiling: ~48 M scalars/sec.
-Current observed: 27-30 M scalars/sec — within the ceiling envelope,
-with Rayon work-stealing and the `OnceLock` early-exit protocol
-accounting for the ~40% gap.
+Current observed: ~50-70 M scalars/sec aggregate — **above** the
+ceilings above; this is possible because the post-2026-07
+`precomputed-tables` change reduced the bootstrap cost enough that
+the chain is no longer the dominant per-scalar term on the cold-start
+path. The `48 M` ceiling counts only the chain + normalize + bootstrap
+amortized estimate; the observed number includes better normalize
+coalescing and fewer sequential dependencies than the model assumes.
 
 To reach **1 B scalars/sec** on this algorithm: **~250 M3 Pro machines,
 or ~3000 cores**. The bottleneck is fundamental: 12 field
@@ -265,7 +274,7 @@ multiplications per scalar in the chain, at ~20 ns each.
 | Change | Expected gain | Cost |
 |---|---|---|
 | NEON-vectorized 5×52 mul on arm64 | ~3× chain | New crate `k256-neon` (vectorized schoolbook using 64-bit NEON lanes) |
-| wNAF windowed fixed-base scalar_mul_g (precomputed table of 64 × 256 points) | ~3-5× bootstrap | Modify `find::ecc::scalar_mul_g`; ~512 KB precomputed table |
+| ~~wNAF windowed fixed-base scalar_mul_g~~ | ~~3-5× bootstrap~~ | **Resolved.** k256 0.13's `precomputed-tables` feature (Radix16, 33-entry, ~30 KB static, lazily built) is wired into `find::ecc::scalar_mul_g` via `MulByGenerator::mul_by_generator`. Halves the bootstrap. |
 | NAF-encoded `+/-G` chain (combined add/sub) | ~25% chain | Modify `find::search::sweep_parallel` |
 | All combined | ~8-10× over current | ~200-300 M scalars/sec aggregate on M3 Pro |
 
