@@ -163,15 +163,92 @@ pub fn mul(&self, rhs: &Self) -> Self {
 
 /// Squares a field element modulo the secp256k1 prime.
 ///
-/// Currently delegates to [`Self::mul`]. A dedicated squaring
-/// routine that exploits `a[i]*a[j] == a[j]*a[i]` symmetry (15
-/// distinct products instead of 25, ~30% speedup) is left as a
-/// future enhancement; the reduction code is non-trivial enough
-/// that the audit surface is not worth the saving for a research
-/// crate that does not square frequently.
+/// Uses the symmetry `a[i]*a[j] == a[j]*a[i]` to compute only 15
+/// distinct products (5 diagonal `a[i]^2` plus 10 off-diagonal
+/// pairs `i<j`, each counted twice via `<< 1`). ~30% fewer
+/// 128-bit multiplications than [`Self::mul`], with the same
+/// secp256k1 fast-reduction.
 #[inline]
 pub fn square(&self) -> Self {
-    self.mul(self)
+    let a0 = self.0[0] as u128;
+    let a1 = self.0[1] as u128;
+    let a2 = self.0[2] as u128;
+    let a3 = self.0[3] as u128;
+    let a4 = self.0[4] as u128;
+    let m: u128 = 0xFFFFFFFFFFFFF;
+    let r: u128 = 0x1000003D10;
+
+    // Column layout (9 columns of the 9-term partial-product sum):
+    //   col 0: a0*a0
+    //   col 1: 2*a0*a1
+    //   col 2: a1*a1 + 2*a0*a2
+    //   col 3: 2*a0*a3 + 2*a1*a2
+    //   col 4: a2*a2 + 2*a0*a4 + 2*a1*a3
+    //   col 5: 2*a1*a4 + 2*a2*a3
+    //   col 6: a3*a3 + 2*a2*a4
+    //   col 7: 2*a3*a4
+    //   col 8: a4*a4
+
+    // Combine column 8's contribution (a4*a4) with the start of the
+    // reduction: it sits at bit position 416, which mod 2^256 is just
+    // the low 48 bits of a4*a4. Since a4 < 2^52, a4*a4 < 2^104, and the
+    // low 48 bits contribute via the same reduction identity r * c_low.
+
+    let mut d = a0 * a3 + a1 * a2;
+    d += d; // 2 * (a0*a3 + a1*a2) = 2*a0*a3 + 2*a1*a2 (column 3)
+    let mut c = a4 * a4;
+    d += (c & m) * r;
+    c >>= 52;
+    let c64 = c as u64;
+    let t3 = (d & m) as u64;
+    d >>= 52;
+    let d64 = d as u64;
+
+    d = d64 as u128 + (a0 * a4) * 2 + (a1 * a3) * 2 + a2 * a2;
+    d += c64 as u128 * r;
+    let t4 = (d & m) as u64;
+    d >>= 52;
+    let d64 = d as u64;
+    let tx = t4 >> 48;
+    let t4 = t4 & ((m as u64) >> 4);
+
+    c = a0 * a0;
+    d = d64 as u128 + (a1 * a4) * 2 + (a2 * a3) * 2;
+    let u0 = (d & m) as u64;
+    d >>= 52;
+    let d64 = d as u64;
+    let u0 = (u0 << 4) | tx;
+    c += u0 as u128 * ((r as u64) >> 4) as u128;
+    let r0 = (c & m) as u64;
+    c >>= 52;
+    let c64 = c as u64;
+
+    c = c64 as u128 + (a0 * a1) * 2;
+    d = d64 as u128 + a3 * a3 + (a2 * a4) * 2;
+    c += (d & m) * r;
+    d >>= 52;
+    let d64 = d as u64;
+    let r1 = (c & m) as u64;
+    c >>= 52;
+    let c64 = c as u64;
+
+    c = c64 as u128 + a1 * a1 + (a0 * a2) * 2;
+    d = d64 as u128 + (a3 * a4) * 2;
+    c += (d & m) * r;
+    d >>= 52;
+    let d64 = d as u64;
+    let r2 = (c & m) as u64;
+    c >>= 52;
+    let c64 = c as u64;
+
+    c = c64 as u128 + (d64 as u128) * r + t3 as u128;
+    let r3 = (c & m) as u64;
+    c >>= 52;
+    let c64 = c as u64;
+    c = c64 as u128 + t4 as u128;
+    let r4 = c as u64;
+
+    FieldElement5x52([r0, r1, r2, r3, r4])
 }
 }
 
@@ -343,6 +420,23 @@ mod tests {
             let ours = FieldElement5x52(a).mul(&FieldElement5x52(b));
             let kref = k256::FieldElement::from_bytes(&limbs_to_be_bytes(&a).into()).unwrap()
                 * k256::FieldElement::from_bytes(&limbs_to_be_bytes(&b).into()).unwrap();
+            assert_eq!(ours.0, be_bytes_to_limbs(&kref.to_bytes().into()));
+        }
+    }
+
+    /// Cross-check: our square equals k256's square byte-for-byte.
+    #[test]
+    fn square_matches_k256_reference() {
+        for &a in &[
+            [1u64, 0, 0, 0, 0],
+            [2, 0, 0, 0, 0],
+            [0xFFFFEFFFFFC2E, 0, 0, 0, 0], // largest canonical single-limb value
+            [0x123456, 0x789ABC, 0xDEF012, 0x345678, 0x9ABCDE],
+        ] {
+            let ours = FieldElement5x52(a).square();
+            let kref = k256::FieldElement::from_bytes(&limbs_to_be_bytes(&a).into())
+                .unwrap()
+                .square();
             assert_eq!(ours.0, be_bytes_to_limbs(&kref.to_bytes().into()));
         }
     }
