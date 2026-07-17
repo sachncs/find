@@ -12,6 +12,20 @@ commit and its commit timestamp.
 
 ### Added
 
+- **Address-discovery input mode**: `--address <base58>` + `--from X
+  --to Y` switch the engine from variant-keyed X-coordinate sweep to
+  a hash40-targeted scalar sweep over a user-specified `u64` range.
+  Strict Base58Check decode accepts only mainnet P2PKH (`0x00`) and
+  P2SH (`0x05`) addresses; non-standard version bytes are rejected
+  at parse time via the new `FindError::InvalidAddress` variant.
+  --pubkey is mutually exclusive (clap-level). New `Address40` newtype
+  and `bitcoin_address_to_hash40` codec live in the new
+  `src/address.rs`. New `search::sweep_address` runs the +G chain
+  and tests each step's compressed-pubkey hash160 against the target.
+  --cache-points is auto-disabled in address mode (the cache stores
+  X-coords; the address sweep produces hash40 instead). The range
+  is u64-bounded: values above `u64::MAX` are out of scope and
+  produce a clear parse error. ADR-0011 documents the design.
 - **Deep pubkey validation**: `Config::validate_pubkey` fails fast on
   malformed SEC1 inputs (commit 3). The orchestrator now calls both
   `validate()` (shallow) and `validate_pubkey()` (deep / `ecc::parse_pubkey`)
