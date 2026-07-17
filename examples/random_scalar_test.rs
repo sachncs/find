@@ -59,7 +59,7 @@ fn main() {
         let target_label = if bits < 64 {
             format!("2^{bits}")
         } else {
-            format!("2^64 - 1")
+            "2^64 - 1".to_string()
         };
         eprintln!(
             "\n=== target d = {target_label} = {d} (decimal), sweep = [{sweep_start}..={sweep_end}], \
