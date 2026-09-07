@@ -1,0 +1,8 @@
+title: "find"
+description: "A high-performance Rust system for secp256k1 cryptographic research and educational discovery."
+theme: minima
+logo: /assets/logo.svg
+show_downloads: false
+permalink: /:title/
+plugins:
+  - jekyll-feed
