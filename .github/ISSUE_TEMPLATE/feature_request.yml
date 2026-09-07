@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest an idea or enhancement
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      placeholder: I'm always frustrated when…
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      placeholder: Add a `foo()` method that does X.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: |
+        - Workaround A
+        - Workaround B
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
