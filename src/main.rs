@@ -171,21 +171,17 @@ fn main() -> anyhow::Result<()> {
     //
     //   - pubkey mode (default): Config::new(pubkey, ...). The pubkey
     //     field is non-empty and required.
-    //   - address mode: we construct Config with a placeholder pubkey
-    //     (the orchestrator ignores it) and feed --address through
+    //   - address mode: Config::new_address_mode(...) with no pubkey
+    //     string (issue #19), then feed --address through
     //     try_with_target_address.
     //
     // Both branches feed the same set of try_with_* builders afterward
     // and the validate_* checks at the orchestrator entry point decide
     // whether the pubkey string is required.
     let mut config_builder = if let Some(addr_str) = args.address {
-        Config::new(
-            "[address mode]".to_string(),
-            args.output_dir,
-            args.cache_points,
-        )
-        .try_with_target_address(&addr_str)
-        .map_err(|e| anyhow::anyhow!("--address: {e}"))?
+        Config::new_address_mode(args.output_dir, args.cache_points)
+            .try_with_target_address(&addr_str)
+            .map_err(|e| anyhow::anyhow!("--address: {e}"))?
     } else {
         let pk = args.pubkey.clone().ok_or_else(|| {
             anyhow::anyhow!("--pubkey is required in pubkey mode (or pass --address)")

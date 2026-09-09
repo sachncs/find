@@ -172,8 +172,12 @@ impl std::fmt::Display for BatchSize {
 #[derive(Debug, Clone)]
 pub struct Config {
     /// HEX-encoded SEC1 public key (compressed or uncompressed).
-    /// Required when `target_address` is `None`; ignored otherwise.
-    pub pubkey: String,
+    ///
+    /// `Some(hex)` for variant-keyed sweep mode (the default). `None` for
+    /// address-keyed sweep mode (`target_address` is `Some`); in that case
+    /// the orchestrator ignores `pubkey` entirely. Library users no
+    /// longer need a placeholder string for the address mode (issue #19).
+    pub pubkey: Option<String>,
     /// Root directory for checkpoints, caches, and exported variant metadata.
     pub output_dir: String,
     /// Whether to generate and persist binary cache files.
@@ -233,6 +237,9 @@ impl Config {
     ///
     /// Uses the default batch size and variant count. For tunables, see
     /// [`Config::with_batch_size`] and [`Config::with_variant_count`].
+    /// For address mode, use [`Config::new_address_mode`] (or
+    /// [`Config::new`] followed by [`Config::clear_pubkey`]) so that no
+    /// placeholder pubkey is needed (issue #19).
     ///
     /// # Arguments
     ///
@@ -252,7 +259,7 @@ impl Config {
     ///     "data",
     ///     false,
     /// );
-    /// assert_eq!(cfg.pubkey.len(), 66);
+    /// assert_eq!(cfg.pubkey.as_deref().unwrap().len(), 66);
     /// assert!(!cfg.cache_points);
     /// assert_eq!(cfg.batch_size, find::config::BatchSize::DEFAULT);
     /// assert_eq!(cfg.variant_count, find::config::DEFAULT_VARIANT_COUNT);
@@ -263,7 +270,7 @@ impl Config {
         cache_points: bool,
     ) -> Self {
         Self {
-            pubkey: pubkey.into(),
+            pubkey: Some(pubkey.into()),
             output_dir: output_dir.into(),
             cache_points,
             batch_size: BatchSize::DEFAULT,
@@ -273,6 +280,55 @@ impl Config {
             target_address: None,
         }
     }
+
+    /// Constructs a new `Config` for address-keyed sweep mode.
+    ///
+    /// No pubkey is required: the `pubkey` field is `None`, and
+    /// [`Config::validate_pubkey`] will not attempt to parse a hex
+    /// SEC1 string. The caller must still call
+    /// [`Config::try_with_target_address`] to set the target address
+    /// (otherwise the validation will reject the configuration).
+    ///
+    /// # Arguments
+    ///
+    /// * `output_dir` — Filesystem path for checkpoints and the exported
+    ///   `points.json` audit file. Created if it does not exist.
+    /// * `cache_points` — Ignored in address mode (the cache stores
+    ///   X-coordinates, which address mode does not produce).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use find::config::Config;
+    ///
+    /// let cfg = Config::new_address_mode("data", false)
+    ///     .try_with_target_address("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
+    ///     .unwrap();
+    /// assert!(cfg.pubkey.is_none());
+    /// assert!(cfg.target_address.is_some());
+    /// ```
+    pub fn new_address_mode(output_dir: impl Into<String>, cache_points: bool) -> Self {
+        Self {
+            pubkey: None,
+            output_dir: output_dir.into(),
+            cache_points,
+            batch_size: BatchSize::DEFAULT,
+            variant_count: DEFAULT_VARIANT_COUNT,
+            range_from: None,
+            range_to: None,
+            target_address: None,
+        }
+    }
+
+    /// Clears the pubkey field, switching the config to address-mode-friendly
+    /// state without an intermediate placeholder string. Equivalent to
+    /// setting `pubkey = None` directly but exposed as a builder for
+    /// symmetry with the other `with_*` / `try_with_*` methods.
+    pub fn clear_pubkey(mut self) -> Self {
+        self.pubkey = None;
+        self
+    }
+
 
     /// Sets the explicit scalar range [`from`, `to`]. Both inclusive.
     ///
@@ -300,9 +356,11 @@ impl Config {
     /// Sets the optional target Bitcoin address (mainnet P2PKH or P2SH).
     ///
     /// When set, the orchestrator switches to the address-keyed sweep
-    /// mode. The `pubkey` field is still required syntactically (its
-    /// empty default is allowed in address mode and is replaced by a
-    /// dummy value at parse time) but it is unused for the hash40 path.
+    /// mode. The `pubkey` field is unused on this path; library users
+    /// constructing address-mode `Config`s should start from
+    /// [`Config::new_address_mode`] (or call [`Config::clear_pubkey`])
+    /// so that `pubkey` is `None` and no placeholder string is needed
+    /// (issue #19).
     ///
     /// Returns `FindError::InvalidAddress` if the address fails to
     /// Base58Check decode or carries a non-`0x00`/`0x05` version byte.
@@ -395,8 +453,10 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`FindError::InvalidPublicKey`] if the pubkey string is empty
-    /// or whitespace-only.
+    /// Returns [`FindError::InvalidPublicKey`] if neither a non-empty
+    /// `pubkey` nor a `target_address` is set. Either is sufficient
+    /// (variant-keyed sweep needs a pubkey; address-keyed sweep needs a
+    /// target address). Both empty is the failure mode.
     ///
     /// # Examples
     ///
@@ -410,10 +470,11 @@ impl Config {
     /// assert!(bad.validate_fields().is_err());
     /// ```
     pub fn validate_fields(&self) -> Result<()> {
-        // Either a SEC1 pubkey OR an address target must be provided.
-        // (Address-targeted mode reuses the pubkey string as an unused
-        //  slot for backward-compat with the existing Config surface.)
-        if self.pubkey.trim().is_empty() && self.target_address.is_none() {
+        let pk_empty = self
+            .pubkey
+            .as_deref()
+            .map_or(true, |s| s.trim().is_empty());
+        if pk_empty && self.target_address.is_none() {
             return Err(FindError::InvalidPublicKey(
                 "Public key cannot be empty (and no --address target was set)".to_string(),
             ));
@@ -430,10 +491,16 @@ impl Config {
     /// as `Err(InvalidPublicKey(_))` rather than as a cryptic parse error
     /// later in the session.
     ///
+    /// In address-keyed mode (`pubkey` is `None` and `target_address` is
+    /// `Some`), `validate_pubkey` is a no-op — there is no pubkey to
+    /// parse. The `target_address` was already validated at
+    /// [`Config::try_with_target_address`] time.
+    ///
     /// # Errors
     ///
     /// Returns [`FindError::InvalidPublicKey`] on any SEC1 parsing failure
-    /// (wrong hex encoding, wrong prefix, off-curve coordinates, etc.).
+    /// (wrong hex encoding, wrong prefix, off-curve coordinates, etc.),
+    /// or when no pubkey and no target address are set.
     ///
     /// # Examples
     ///
@@ -451,20 +518,21 @@ impl Config {
     /// assert!(bad.validate_pubkey().is_err());
     /// ```
     pub fn validate_pubkey(&self) -> Result<()> {
-        // In address-targeted mode the pubkey string is unused; skip
-        // the SEC1 parse unconditionally. The CLI placeholder
-        // "[address mode]" is not a valid hex string and would otherwise
-        // trip parse_pubkey.
-        if self.target_address.is_some() {
-            return Ok(());
+        match (&self.pubkey, &self.target_address) {
+            (None, None) => Err(FindError::InvalidPublicKey(
+                "Public key cannot be empty (and no --address target was set)".to_string(),
+            )),
+            (None, Some(_)) => Ok(()),
+            (Some(pk), _) => {
+                if pk.trim().is_empty() {
+                    return Err(FindError::InvalidPublicKey(
+                        "Public key cannot be empty".to_string(),
+                    ));
+                }
+                crate::ecc::parse_pubkey(pk)?;
+                Ok(())
+            }
         }
-        if self.pubkey.trim().is_empty() {
-            return Err(FindError::InvalidPublicKey(
-                "Public key cannot be empty".to_string(),
-            ));
-        }
-        crate::ecc::parse_pubkey(&self.pubkey)?;
-        Ok(())
     }
 }
 
@@ -518,15 +586,55 @@ mod tests {
         assert!(ws.validate_pubkey().is_err());
     }
 
-    /// Verifies that `validate_pubkey` accepts any string in address
-    /// mode (the pubkey field is unused there).
+    /// Verifies that `validate_pubkey` accepts address-mode configs
+    /// without a pubkey (issue #19).
     #[test]
     fn test_config_validate_pubkey_skipped_in_address_mode() {
-        let cfg = Config::new("[address mode]", "/tmp", false)
+        let cfg = Config::new_address_mode("/tmp", false)
             .try_with_target_address("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
             .unwrap();
         cfg.validate_pubkey()
             .expect("address mode must skip pubkey parse");
+    }
+
+    /// Verifies that `Config::new_address_mode` produces a Config with
+    /// `pubkey: None` and no other surprises (issue #19).
+    #[test]
+    fn test_config_new_address_mode() {
+        let cfg = Config::new_address_mode("/tmp/data", false);
+        assert!(cfg.pubkey.is_none(), "new_address_mode must set pubkey=None");
+        assert_eq!(cfg.output_dir, "/tmp/data");
+        assert!(!cfg.cache_points);
+        assert_eq!(cfg.batch_size, BatchSize::DEFAULT);
+        assert_eq!(cfg.variant_count, DEFAULT_VARIANT_COUNT);
+        assert!(cfg.target_address.is_none());
+    }
+
+    /// Verifies that `Config::clear_pubkey` drops the pubkey field
+    /// without otherwise mutating the Config (issue #19).
+    #[test]
+    fn test_config_clear_pubkey() {
+        let cfg = Config::new("02abcd", "/tmp", false).clear_pubkey();
+        assert!(cfg.pubkey.is_none());
+        assert_eq!(cfg.output_dir, "/tmp");
+    }
+
+    /// Verifies that `validate_fields` accepts a Config that has only
+    /// a target address set (no pubkey) — issue #19.
+    #[test]
+    fn test_validate_fields_accepts_address_mode_without_pubkey() {
+        // new_address_mode produces a Config with pubkey=None and
+        // target_address=None; that's invalid (nothing to search on).
+        let empty = Config::new_address_mode("/tmp", false);
+        assert!(empty.validate_fields().is_err());
+
+        // With a target_address set, validate_fields accepts even
+        // though pubkey is None.
+        let addr_mode = Config::new_address_mode("/tmp", false)
+            .try_with_target_address("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
+            .unwrap();
+        assert!(addr_mode.validate_fields().is_ok());
+        assert!(addr_mode.validate_pubkey().is_ok());
     }
 
     /// Verifies that `BatchSize::new` accepts legal values.

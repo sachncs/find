@@ -138,7 +138,11 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
         return run_address_mode(config, target);
     }
 
-    let target_p = ecc::parse_pubkey(&config.pubkey)?;
+    let target_p = ecc::parse_pubkey(config.pubkey.as_deref().ok_or_else(|| {
+        FindError::InvalidPublicKey(
+            "Public key cannot be empty (and no --address target was set)".to_string(),
+        )
+    })?)?;
     let variants = search::generate_variants(&target_p);
     let variant_x_bytes = search::compute_variant_x_bytes(&target_p);
     persistence::write_variants_json(variants, &variant_x_bytes, &config.output_dir)?;
@@ -151,8 +155,8 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
     let mut current_j: u64;
 
     match persistence::Checkpoint::load(&checkpoint_file) {
-        Ok(cp) if cp.pubkey == config.pubkey => {
-            cp.verify(&config.pubkey)?;
+        Ok(cp) if Some(&cp.pubkey) == config.pubkey.as_ref() => {
+            cp.verify(config.pubkey.as_deref().unwrap())?;
             current_j = cp.last_j;
             info!("Verified integrity. Resuming from j = {}", current_j);
         }
@@ -244,7 +248,7 @@ pub fn run(config: &Config) -> Result<Option<SearchMatch>> {
 
         persistence::Checkpoint {
             last_j: current_j,
-            pubkey: config.pubkey.clone(),
+            pubkey: config.pubkey.clone().unwrap_or_default(),
             last_x: boundary_x,
         }
         .save_atomic(&checkpoint_file)?;

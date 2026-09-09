@@ -290,13 +290,9 @@ fn test_orchestrator_address_mode_finds_small_scalar() {
     std::fs::create_dir_all(&output_dir).unwrap();
     std::fs::create_dir_all(&log_dir).unwrap();
 
-    let mut config = Config::new(
-        "[address mode]".to_string(),
-        output_dir.to_string_lossy().into_owned(),
-        false,
-    )
-    .try_with_target_address(&address_str)
-    .expect("valid address must build");
+    let mut config = Config::new_address_mode(output_dir.to_string_lossy().into_owned(), false)
+        .try_with_target_address(&address_str)
+        .expect("valid address must build");
     config = config.try_with_range(1, 100).expect("1 <= 100");
 
     let start = Instant::now();
@@ -334,15 +330,11 @@ fn test_orchestrator_address_mode_returns_none_when_target_not_in_range() {
     std::fs::create_dir_all(&output_dir).unwrap();
     std::fs::create_dir_all(&log_dir).unwrap();
 
-    let config = Config::new(
-        "[address mode]".to_string(),
-        output_dir.to_string_lossy().into_owned(),
-        false,
-    )
-    .try_with_target_address("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
-    .expect("address must build")
-    .try_with_range(10, 20)
-    .expect("10 <= 20");
+    let config = Config::new_address_mode(output_dir.to_string_lossy().into_owned(), false)
+        .try_with_target_address("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
+        .expect("address must build")
+        .try_with_range(10, 20)
+        .expect("10 <= 20");
 
     let result = run(&config).expect("orchestrator should run cleanly");
     assert!(

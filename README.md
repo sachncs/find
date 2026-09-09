@@ -109,6 +109,11 @@ let config = Config::new(pubkey, "data", false)
     .try_with_batch_size(32)?      // 1..=256; returns FindError::InvalidConfig on out-of-range
     .try_with_variant_count(512)?; // 1..=512
 
+// Or, for address-keyed discovery, use Config::new_address_mode:
+let _addr_cfg = Config::new_address_mode("data", false)
+    .try_with_target_address("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")?
+    .try_with_range(1, 100_000)?;
+
 let match_ = orchestrator::run(&config)?;
 if let Some(m) = match_ {
     println!("MATCH DISCOVERED via {} at j={}", m.label, m.j);
@@ -248,6 +253,7 @@ review-driven pass:
 | `Config::{with_batch_size, with_variant_count}` builders | `fn(self, u32) -> Self` (panicking) | `#[deprecated]`; replaced by `try_with_*` builders returning `Result<Self, FindError>` |
 | `--batch-size` honoured at runtime | ignored; fixed at `MAX_BATCH = 32` | honoured via heap-allocated runtime-sized batches (commit 7b) |
 | `Config::validate` | shallow check only | renamed to `Config::validate_fields`; `Config::validate_pubkey()` deep validation retained (commit 3 + rename pass) |
+| `Config::pubkey` field | `pub pubkey: String` | `pub pubkey: Option<String>` (issue #19) |
 | `find::search::SearchMatch::candidates` | `pub candidates: [String; 2]` | `pub candidates: [Scalar; 2]` (commit 12, breaking) |
 | `SearchMatch::candidates_as_scalars` | `pub fn(&self) -> Result<[Scalar; 2]>` | `pub fn(&self) -> [Scalar; 2]` (no parsing needed) |
 | `SearchMatch::candidates_hex()` | (did not exist) | new: returns `[String; 2]` |
@@ -266,6 +272,7 @@ review-driven pass:
 | `find::config::SweepRange` | available | **removed** (commit 8) |
 | `find::search::MAX_BATCH` const | `pub const MAX_BATCH: usize = 32` | **removed** (commit 7b) |
 | Doctest `Box<dyn std::error::Error>` | in 6+ places | replaced with `Box<dyn core::error::Error>` (commit 16, MSRV 1.81) |
+| Address-mode Config construction | `Config::new("[address mode]", ...)` placeholder | `Config::new_address_mode(...).try_with_target_address(addr)?` (issue #19) |
 | MSRV | 1.70 | **1.81** (commit 16) |
 | `k256-bmi2` crate | `bmi2-adx` feature present, `mul_bmi2_adx` placeholder | BMI2/ADX code paths removed; crate is portable-only with working schoolbook `mul` + symmetric `square`. Zero `unsafe`. Not wired into `find`'s hot path; serves as a correctness oracle. (ADR-0010) |
 
