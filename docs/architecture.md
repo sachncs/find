@@ -476,7 +476,7 @@ See [security.md](security.md) for the full security model. The architecture-lev
 - **Input validation** at the boundary: `Config::validate_fields` (shallow) + `Config::validate_pubkey` (deep, delegates to `ecc::parse_pubkey`). `Config::try_with_*` builders reject out-of-range `--batch-size` / `--variants` as `FindError::InvalidConfig`.
 - **No network I/O** — the tool does not require or use the network.
 - **Dependency auditing** via `cargo audit` and `cargo deny` in CI.
-- **Miri for unsafe changes** — `cargo +nightly miri test --workspace --all-features` runs on every PR (CI) and is required for any PR that modifies `unsafe`.
+- **Miri for unsafe changes (local only)** — `cargo +nightly miri test --workspace --all-features` is recommended locally for any PR that modifies `unsafe`. It is **not** a CI gate: the job was removed in commit `ade4899` because proptest's `getcwd` conflicts with Miri's filesystem isolation and the project's threat model does not require Miri-level UB detection (the only `unsafe` block is the reviewed `libc::fsync` in `src/persistence.rs`).
 
 ## Extension points
 

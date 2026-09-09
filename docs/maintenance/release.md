@@ -25,7 +25,7 @@ Before creating a release, verify:
 
 - [ ] All tests pass: `make test`
 - [ ] Linting passes: `make lint`
-- [ ] `cargo +nightly miri test --workspace --all-features` passes (commit 9 added this as a required-for-merge CI job; re-run it locally for any PR that touched `unsafe`)
+- [ ] If the release touches `unsafe` code: `cargo +nightly miri test --workspace --all-features` passes locally (Miri is no longer a CI gate; see [CONTRIBUTING.md#unsafe-code-changes](../../CONTRIBUTING.md#unsafe-code-changes))
 - [ ] Benchmarks are healthy: `cargo bench --bench bench -- --baseline current -- --threshold 5` shows **no regression > 5%** (5% policy gate from commit 15)
 - [ ] Documentation is up to date: `docs/README.md` is the index; `docs/architecture.md` + `docs/algorithms.md` + `docs/modules.md` are accurate; all cross-doc links resolve (the local pre-commit gate `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` will surface any broken intra-doc link)
 - [ ] [CHANGELOG.md](../../CHANGELOG.md) is updated with the new version's release notes; the `[Unreleased]` block is closed (or moved) and a fresh `[Unreleased]` placeholder is opened if desired

@@ -283,7 +283,7 @@ The tool is designed with security in mind:
 - Input validation on all operations: `Config::validate_fields` (shallow) + `Config::validate_pubkey` (deep SEC1 parse) at the top of `orchestrator::run`; fallible `try_with_batch_size` / `try_with_variant_count` in `main`.
 - Checkpoint integrity verification
 - Atomic file operations (write-then-rename + parent-dir `fsync` on Unix)
-- Required-for-merge `cargo miri` job in CI (commit 9)
+- Miri is recommended locally for PRs that add or modify `unsafe` (CI does not enforce it; see [CONTRIBUTING.md#unsafe-code-changes](../CONTRIBUTING.md#unsafe-code-changes))
 
 For the full security model, see [security.md](security.md).
 

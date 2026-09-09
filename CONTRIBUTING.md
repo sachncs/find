@@ -214,7 +214,7 @@ Before requesting review, ensure:
 - [ ] `cargo fmt --all -- --check` passes
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes (with the curated `pedantic + nursery` lint config)
 - [ ] `cargo test --all-targets --all-features` passes (and `cargo test --doc`)
-- [ ] `cargo +nightly miri test --workspace --all-features` passes (only required if you touched `unsafe`)
+- [ ] If you touched `unsafe`: `cargo +nightly miri test --workspace --all-features` passes locally (see [Unsafe-code changes](#unsafe-code-changes))
 - [ ] New tests added for changed behavior
 - [ ] Documentation updated (README, [docs/](docs/README.md), or inline docs)
 - [ ] CHANGELOG.md updated for user-facing changes
@@ -257,10 +257,22 @@ cargo test --doc
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 ```
 
-### Unsafe-code changes must pass miri
+### Unsafe-code changes
 
-PRs that add or modify `unsafe` code MUST pass [`miri`][miri] under
-the [nightly toolchain](https://rust-lang.github.io/rustup/concepts/toolchains.html):
+The codebase contains a single `unsafe` block: `libc::fsync` on the
+checkpoint parent directory in [`src/persistence.rs`](src/persistence.rs).
+That block has a three-clause self-contained safety justification in
+its `// SAFETY:` comment.
+
+Miri is **not** a CI gate. It was added as a required-for-merge job
+in commit 9 and removed in commit `ade4899` (proptest's `getcwd`
+conflict with Miri's filesystem isolation; the project's threat model
+does not require Miri-level UB detection for a single reviewed
+`unsafe` block).
+
+If your PR adds or modifies `unsafe` code, run [`miri`][miri] under
+the [nightly toolchain](https://rust-lang.github.io/rustup/concepts/toolchains.html)
+locally before requesting review:
 
 ```bash
 rustup component add miri --toolchain nightly
@@ -268,10 +280,10 @@ cargo +nightly miri setup
 cargo +nightly miri test --workspace --all-features
 ```
 
-The CI workflow's `miri` job runs this on every PR; a local run
-before pushing the branch catches the failure earlier. See
+The CI workflow does not run Miri on PRs; a local run before pushing
+the branch catches the failure earlier. See
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the
-canonical CI invocation.
+canonical CI invocation (no Miri step).
 
 [miri]: https://github.com/rust-lang/miri
 

@@ -22,12 +22,12 @@ All near-term items in the previous roadmap have shipped as part of commits 1–
 | Heap-allocated hot-path batch arrays + `Config::batch_size` honoured at runtime | 7b | [ADR-0009](../adr/0009-runtime-batch-size.md) |
 | Interned `&'static [OffsetVariant]` + `compute_variant_x_bytes` helper | 7c | opt-decisions 0002 |
 | Removed `SweepRange` dead newtype | 8 | CHANGELOG |
-| Required-for-merge `cargo miri` job in CI | 9 | CHANGELOG + CONTRIBUTING.md |
+| Required-for-merge `cargo miri` job in CI (added in commit 9; later removed in `ade4899`; see CHANGELOG) | 9, `ade4899` | CHANGELOG + CONTRIBUTING.md |
 | Curated `[lints]` configuration (pedantic + nursery with allow-list) | 10 | CHANGELOG |
 | `SearchMatch.candidates: [Scalar; 2]` (breaking) + `candidates_hex()` accessor | 12 | CHANGELOG + Migration table |
 | `copy_from_slice` in cached sweep (drop `try_into + expect`) | 13 | code inline |
 | ADR-0009 + opt-decision 0007 + CHANGELOG rollup + docs refresh | 14 | `docs/` tree |
-| Local pre-commit gate (fmt + clippy -D warnings + test + doc + miri) | 14 | CONTRIBUTING.md |
+| Local pre-commit gate (fmt + clippy -D warnings + test + doc; miri now optional, see CONTRIBUTING.md#unsafe-code-changes) | 14, `ade4899` | CONTRIBUTING.md |
 | **Full pre-commit-gate verified locally + benchmark regression gate met** | 15 | commit message records cycle counts |
 | MSRV 1.70 → 1.81 for stable `core::error::Error` | 16 | CHANGELOG + Migration table |
 

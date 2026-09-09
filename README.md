@@ -38,7 +38,7 @@ and offsets `V` such that `x(j·G) = x(P - V·G)`, yielding key candidates
 - **Differential Testing** — Cross-implementation verification against `libsecp256k1` (the reference C implementation).
 - **Fuzz Testing** — Six cargo-fuzz targets for the public APIs (`parse_pubkey`, `parse_pubkey_roundtrip`, `hex_to_scalar`, `scalar_mul_g`, `generate_variants`, `match_x`).
 - **Strict Lint Configuration** — Curated `pedantic + nursery` clippy sets with a documented allow-list, gated by `-D warnings`.
-- **Required-for-merge `cargo miri`** — Every PR runs `cargo +nightly miri test --workspace --all-features` on `ubuntu-latest`.
+- **Optional Miri run for `unsafe` changes** — Miri is **not** a CI requirement; the only `unsafe` block is the reviewed `libc::fsync` in `src/persistence.rs`. Contributors who modify `unsafe` are encouraged to run `cargo +nightly miri test --workspace --all-features` locally. See [CONTRIBUTING.md](CONTRIBUTING.md#unsafe-code-changes) for the developer policy.
 
 ---
 
@@ -217,7 +217,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
 cargo test --doc
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
-cargo +nightly miri test --workspace --all-features    # required for merges touching unsafe
+# Optional: only required for PRs that add or modify `unsafe` code.
+cargo +nightly miri test --workspace --all-features
 ```
 
 ---
@@ -254,7 +255,7 @@ review-driven pass:
 | MSRV | 1.70 | **1.81** (commit 16) |
 | `k256-bmi2` crate | `bmi2-adx` feature present, `mul_bmi2_adx` placeholder | BMI2/ADX code paths removed; crate is portable-only with working schoolbook `mul` + symmetric `square`. Zero `unsafe`. Not wired into `find`'s hot path; serves as a correctness oracle. (ADR-0010) |
 
-The full review-driven pass added (without breaking the API): `BatchSize` newtype + `try_with_*` builders, run-time batch sizing, `OnceLock<SearchMatch>` coordination, interned static variant metadata, strict `cargo clippy -D warnings` (with curated pedantic + nursery sets), and the required-for-merge `cargo miri` job.
+The full review-driven pass added (without breaking the API): `BatchSize` newtype + `try_with_*` builders, run-time batch sizing, `OnceLock<SearchMatch>` coordination, interned static variant metadata, strict `cargo clippy -D warnings` (with curated pedantic + nursery sets). The `cargo miri` job was added in commit 9 and removed in commit `ade4899` (proptest's `getcwd` conflicts with Miri's filesystem isolation; the project's threat model does not require Miri-level UB detection since the only `unsafe` block is the reviewed `libc::fsync`).
 
 ---
 
@@ -331,7 +332,8 @@ cargo test
 cargo bench
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all -- --check
-cargo +nightly miri test --workspace --all-features   # required if you touched unsafe
+# Optional: only for PRs that add or modify `unsafe` code.
+cargo +nightly miri test --workspace --all-features
 ```
 
 The project also ships a `Makefile`:
@@ -347,7 +349,7 @@ The project also ships a `Makefile`:
 | `make deny` | Run `cargo-deny` for license/dependency auditing |
 | `make all-checks` | Run the full verification suite (`scripts/check-all.sh`) |
 
-The **local pre-commit gate** (mirrors CI) is documented in detail in [CONTRIBUTING.md](CONTRIBUTING.md); the `cargo +nightly miri test --workspace --all-features` step is required for any PR that adds or modifies `unsafe` code, and the `cargo bench --bench bench -- --baseline current -- --threshold 5` gate ensures no hot-path change regresses by more than 5%.
+The **local pre-commit gate** (mirrors CI) is documented in detail in [CONTRIBUTING.md](CONTRIBUTING.md); the `cargo +nightly miri test --workspace --all-features` step is recommended for any PR that adds or modifies `unsafe` code (CI does not enforce it — see [CONTRIBUTING.md#unsafe-code-changes](CONTRIBUTING.md#unsafe-code-changes) for the rationale), and the `cargo bench --bench bench -- --baseline current -- --threshold 5` gate ensures no hot-path change regresses by more than 5%.
 
 ---
 
@@ -357,7 +359,8 @@ The **local pre-commit gate** (mirrors CI) is documented in detail in [CONTRIBUT
 cargo test --all-targets --all-features
 cargo test --doc
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
-cargo +nightly miri test --workspace --all-features   # ~10–30 min on first run
+# Optional: only for PRs that add or modify `unsafe` code. ~10–30 min on first run.
+cargo +nightly miri test --workspace --all-features
 ```
 
 ---
@@ -405,7 +408,7 @@ Versions follow [Semantic Versioning](https://semver.org/). The crate is current
 | Hex + big-int (test helpers only) | `num-bigint` 0.5 (dev-dep) |
 | POSIX (Unix only) | `libc` 0.2 (the one reviewed `unsafe`: `libc::fsync` in `src/persistence.rs`) |
 | Testing | `proptest` 1.11, `criterion` 0.8, `tempfile` 3, `rand` 0.10, `rand_chacha` 0.10, `num-traits` 0.2 |
-| CI/CD | GitHub Actions (Ubuntu + macOS + Windows); `cargo miri` on `ubuntu-latest` is required-for-merge |
+| CI/CD | GitHub Actions (Ubuntu + macOS + Windows); miri is run locally by the contributor for `unsafe` changes (see [CONTRIBUTING.md](CONTRIBUTING.md#unsafe-code-changes)) |
 
 ---
 
@@ -423,7 +426,7 @@ The following items shipped in commits 1–16 of the `master` branch and are des
 - **Heap-allocated hot-path batch arrays** (commit 7b) — `--batch-size` is finally honoured at runtime; see [ADR-0009](docs/adr/0009-runtime-batch-size.md).
 - **`generate_variants -> &'static [OffsetVariant]`** (commit 7c) — interned metadata; per-session `compute_variant_x_bytes`.
 - **`SweepRange` removed** (commit 8) — dead newtype purged.
-- **Required-for-merge `cargo miri` job** (commit 9) — `.github/workflows/ci.yml::miri`.
+- **Required-for-merge `cargo miri` job** (commit 9) — added then **removed** in commit `ade4899` (Miri's filesystem isolation conflicts with `proptest::getcwd`; the project's threat model does not require Miri-level UB detection because the only `unsafe` block is a reviewed `libc::fsync`).
 - **Curated `[lints]` section** (commit 10) — pedantic + nursery with a documented allow-list.
 - **`SearchMatch.candidates: [Scalar; 2]`** (commit 12) — breaking; new `candidates_hex()` accessor.
 - **`copy_from_slice` in cached sweep** (commit 13) — drops `try_into + expect`.
@@ -444,8 +447,8 @@ The following items shipped in commits 1–16 of the `master` branch and are des
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the fork-and-branch workflow, commit
 conventions (Conventional Commits), and [Architecture Decision Records](docs/adr/README.md).
-PRs that touch `unsafe` code MUST pass `cargo +nightly miri test --workspace
---all-features` locally; see [CONTRIBUTING.md#unsafe-code-changes-must-pass-miri](CONTRIBUTING.md).
+PRs that touch `unsafe` code SHOULD run `cargo +nightly miri test --workspace
+--all-features` locally; see [CONTRIBUTING.md#unsafe-code-changes](CONTRIBUTING.md#unsafe-code-changes).
 
 ## Code of Conduct
 

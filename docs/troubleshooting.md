@@ -182,7 +182,7 @@ The exit code is set by `anyhow` based on the underlying `Result`. Any error fro
 
 ## Miri failures
 
-`cargo +nightly miri test --workspace --all-features` is required for any PR that adds or modifies `unsafe` code. If you see a miri failure locally:
+Miri is **not** a CI requirement. Contributors who add or modify `unsafe` code SHOULD run Miri locally before requesting review. If you see a miri failure locally:
 
 ```bash
 # Re-run a specific test under miri
@@ -190,10 +190,16 @@ cargo +nightly miri test --workspace --all-features -- prop_to_hex_x_idempotent
 
 # If proptest's FileFailurePersistence fails on `std::env::current_dir`,
 # that's a known interaction between proptest and miri's isolation model;
-# unset PROPTEST_NO_PERSISTENCE (it is set by the CI workflow) and re-run.
+# unset PROPTEST_NO_PERSISTENCE and re-run.
 ```
 
-The non-Unix `Mutex<File>` inside `BinaryCacheWriter` is the only place where miri may flag a path; it has been exercised on `ubuntu-latest` in CI without issue. If a miri failure points elsewhere in the codebase, **the change must be reverted** per [CONTRIBUTING.md](../CONTRIBUTING.md).
+The single `unsafe` block (a reviewed `libc::fsync` on the checkpoint
+parent directory in `src/persistence.rs`) has been exercised under
+Miri without issue. If a miri failure points elsewhere in the
+codebase, treat it as a real bug and **the change must be reverted or
+fixed** per [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+See [CONTRIBUTING.md#unsafe-code-changes](../CONTRIBUTING.md#unsafe-code-changes) for the current policy.
 
 ## Getting help
 

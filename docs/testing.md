@@ -222,7 +222,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 # Doc build must be warning-clean
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 
-# Miri on nightly (only required if a PR touches unsafe; ~10-30 min on a fresh sccache)
+# Optional: only required if a PR touches unsafe; ~10-30 min on a fresh sccache
 rustup component add --toolchain nightly miri
 cargo +nightly miri setup
 cargo +nightly miri test --workspace --all-features
@@ -266,14 +266,11 @@ All changes are validated through GitHub Actions on **Ubuntu, macOS, and Windows
 | `clippy` | `cargo clippy --all-targets --all-features -- -D warnings` |
 | `test` | `cargo test --all-targets --all-features` (matrix: ubuntu/macos/windows) |
 | `doc` | `cargo doc --no-deps --all-features` with `RUSTDOCFLAGS="-D warnings"` |
-| `miri` | `cargo +nightly miri test --workspace --all-features` (**required-for-merge** since commit 9; verifies the one reviewed `unsafe` block in `src/persistence.rs`) |
+| `bench` | `cargo bench --bench bench -- --sample-size 10` (informational) |
 | `audit` | `cargo audit` for security advisories |
 | `deny` | `cargo deny check all` for license/dependency auditing |
-| `coverage` | `cargo tarpaulin` for code coverage reporting |
 
-The `coverage` job uploads a `cobertura.xml` to Codecov. The `fail_ci_if_error: false` setting means coverage regressions do not block merges, but trends are tracked.
-
-The `miri` job runs on `ubuntu-latest` with the nightly toolchain; it is required-for-merge (no `continue-on-error`). A local PR may opt to skip the miri run when its diff does not touch `unsafe`, but a passing nightly-miri run is still required by CI before merge. See [CONTRIBUTING.md#unsafe-code-changes-must-pass-miri](../CONTRIBUTING.md) for the developer policy.
+A `miri` job was added in commit 9 and removed in commit `ade4899` (proptest's `getcwd` conflicts with Miri's filesystem isolation; the project's threat model does not require Miri-level UB detection because the only `unsafe` block is the reviewed `libc::fsync`). PRs that add or modify `unsafe` SHOULD run Miri locally — see [CONTRIBUTING.md#unsafe-code-changes](../CONTRIBUTING.md#unsafe-code-changes).
 
 ## Code coverage
 
@@ -311,7 +308,7 @@ the project carries **112 tests across 7 binaries**:
 | Differential | `k256` vs reference C `libsecp256k1` | `tests/differential.rs` |
 | End-to-end / audit | Full pipeline recovery | `tests/audit.rs` |
 | Orchestrator | Session lifecycle, checkpoint resume, corruption rejection | `tests/orchestrator.rs` |
-| Miri (CI, required for `unsafe` changes) | Verifies the reviewed `libc::fsync` block; the rest of the codebase is safe by construction | `cargo +nightly miri test` |
+| Miri (local, for `unsafe` changes) | Optional local verification of the reviewed `libc::fsync` block; the rest of the codebase is safe by construction | `cargo +nightly miri test` |
 | Benchmarks | Performance regression within the 5% gate | `criterion` |
 | Audit (CI) | Vulnerability database | `cargo audit` |
 | License (CI) | Dependency license compliance | `cargo deny` |
