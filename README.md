@@ -174,9 +174,16 @@ samples):
 
 | Bench | Pre-precomputed-tables | Post-precomputed-tables | Speedup |
 |---|---|---|---|
-| `plus_g_chain/chain_32_plus_g` | 33.78 µs | 18.93 µs | 1.78× |
-| `plus_g_chain/naive_32_independent_scalar_muls` | 919.88 µs | 455.89 µs | 2.02× |
-| `end_to_end_small_scalar_12345` (10M scalars) | ~5.27 ms | 1.949 ms | 2.70× |
+| `plus_g_chain/chain_32_plus_g` | 33.78 µs | 18.98 µs | 1.78× |
+| `plus_g_chain/naive_32_scalar_muls` | 919.88 µs | 428.18 µs | 2.15× |
+| `end_to_end_small_scalar_12345` (10M scalars) | ~5.27 ms | 1.985 ms | 2.65× |
+
+All numbers above come from a single canonical `cargo bench` run
+on an Apple M3 Pro (`opt-level=3`, `lto=fat`, `criterion` 100
+samples) recorded against the precomputed-tables commit (`006dd15`).
+They are propagated identically through `README.md`,
+`CHANGELOG.md` ([Unreleased → Changed entry for precomputed-tables](../CHANGELOG.md)),
+and [docs/performance.md](docs/performance.md).
 
 Before the precomputed-tables change the bootstrap was ~80% of per-batch
 cycles; now the chain + Montgomery normalize + match collectively take
