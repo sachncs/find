@@ -2,10 +2,16 @@
 
 ## Supported Versions
 
+The current shipping release line is `0.1.x`. The next release
+(`0.2.0`) ships breaking API changes that are tracked in
+[README.md → Migration](README.md#migration-016--020). Until `0.2.0`
+is published, security fixes are backported to the latest `0.1.x`
+release.
+
 | Version | Supported |
 | ------- | --------- |
-| 1.0.x   | :white_check_mark: |
-| < 1.0.0 | :x: |
+| 0.1.x (latest) | :white_check_mark: |
+| < 0.1.6       | :x:                |
 
 ## Reporting a Vulnerability
 
