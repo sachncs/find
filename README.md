@@ -1,14 +1,16 @@
-<p align="center">
-  <h1 align="center">Secp256k1 Find Tool</h1>
-  <p align="center">High-performance secp256k1 private-key discovery using range-splitting and Montgomery batch inversion.</p>
-  <p align="center">
-    <a href="#installation"><img src="https://img.shields.io/badge/rust-1.81%2B-orange" alt="Rust"></a>
-    <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
-    <a href="https://github.com/sachncs/find/actions"><img src="https://img.shields.io/github/actions/workflow/status/sachncs/find/ci.yml?branch=master" alt="CI"></a>
-    <a href="https://crates.io/crates/find"><img src="https://img.shields.io/crates/v/find" alt="crates.io"></a>
-    <a href="https://github.com/sachncs/find/stargazers"><img src="https://img.shields.io/github/stars/sachncs/find" alt="Stars"></a>
-  </p>
-</p>
+<div align="center">
+
+# Secp256k1 Find Tool
+
+**High-performance secp256k1 private-key discovery using range-splitting and Montgomery batch inversion.**
+
+[![Rust](https://img.shields.io/badge/rust-1.81%2B-orange)](#installation)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE-MIT)
+[![CI](https://img.shields.io/github/actions/workflow/status/sachncs/find/ci.yml?branch=master)](https://github.com/sachncs/find/actions)
+[![crates.io](https://img.shields.io/crates/v/find)](https://crates.io/crates/find)
+[![Stars](https://img.shields.io/github/stars/sachncs/find)](https://github.com/sachncs/find/stargazers)
+
+</div>
 
 **find** is a high-performance Rust system for secp256k1 private key discovery
 using a multi-variant range-splitting algorithm. It searches for scalars `j`
