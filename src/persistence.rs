@@ -293,16 +293,22 @@ impl BinaryCacheWriter {
         })
     }
 
-    /// Pre-allocates the file to `len` bytes.
+    /// Pre-allocates the file to at least `len` bytes.
     ///
     /// This is a hint to the file system and may improve sequential-write
-    /// performance. It is safe to call multiple times; subsequent calls will
-    /// truncate or extend the file as needed.
+    /// performance. If the file is **already** at least `len` bytes long,
+    /// the call is a no-op — `preallocate` does **not** truncate existing
+    /// cache data. A re-call with a smaller `len` is silently ignored;
+    /// a re-call with a larger `len` extends the file.
+    ///
+    /// Callers that need an exact-size file (for example, to detect
+    /// corruption) should use [`std::fs::File::set_len`] directly and
+    /// handle the destructive semantics themselves.
     ///
     /// # Errors
     ///
     /// Returns [`FindError::Io`] if the file descriptor does not support
-    /// truncation.
+    /// truncation, or if the underlying `set_len` call fails on extend.
     ///
     /// # Performance
     ///
@@ -316,6 +322,13 @@ impl BinaryCacheWriter {
         // mutex implies another writer thread panicked mid-write, which we
         // cannot recover from safely.
         let file = self.file.lock().expect("file cache writer mutex poisoned");
+        let current = file.metadata().map_err(FindError::Io)?.len();
+        if len <= current {
+            // Already large enough — do NOT truncate. Cache data is
+            // valuable; destroying it on a re-call would be silent and
+            // unrecoverable for the caller.
+            return Ok(());
+        }
         file.set_len(len).map_err(FindError::Io)?;
         Ok(())
     }
@@ -679,6 +692,44 @@ mod tests {
 
         writer.preallocate(64).unwrap();
         assert_eq!(std::fs::metadata(&nested).unwrap().len(), 64);
+    }
+
+    /// Verifies that [`BinaryCacheWriter::preallocate`] refuses to
+    /// truncate the file when called with a smaller `len` than the
+    /// current size (#20).
+    #[test]
+    fn test_file_cache_writer_preallocate_refuses_to_truncate() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("cache.bin");
+        let writer = BinaryCacheWriter::create(&path).unwrap();
+
+        // Write two 32-byte blocks (file size = 64 bytes).
+        let block = b"0123456789abcdef0123456789abcdef";
+        writer.write_block(0, block).unwrap();
+        writer.write_block(32, block).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 64);
+
+        // A smaller preallocate must NOT truncate.
+        writer.preallocate(32).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            64,
+            "preallocate(32) must not truncate the 64-byte file"
+        );
+
+        // An equal preallocate is a no-op.
+        writer.preallocate(64).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 64);
+
+        // A larger preallocate extends.
+        writer.preallocate(128).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 128);
+
+        // Data inside the original 64-byte region must still be readable
+        // after the larger preallocate (no clobbering of head bytes).
+        let read_back = std::fs::read(&path).unwrap();
+        assert_eq!(&read_back[..32], block);
+        assert_eq!(&read_back[32..64], block);
     }
 
     /// Verifies that [`BinaryCacheWriter`] can write blocks and read them back.
