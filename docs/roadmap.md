@@ -4,7 +4,7 @@ This document describes the project's direction. It is **not** a contract — it
 
 ## Current Status
 
-The crate is at **v0.1.6**. The `master` branch carries the **review-driven pass** in commits 1–18 — a sequence of safety, correctness, and API improvements reviewed against the elite-Rust checklist in `todo.md`. The next release is **v0.2.0**, a SemVer-minor bump because commits 7a, 7b, 7c, and 12 are breaking API changes (see [CHANGELOG.md](../CHANGELOG.md) and the [Migration table in README.md](../README.md#migration-016--020)).
+The crate is at **v0.1.6**. The `master` branch carries the **review-driven pass** in commits 1–18 — a sequence of safety, correctness, and API improvements reviewed against the elite-Rust checklist in [docs/maintenance/internal/review-driven-todo.md](internal/review-driven-todo.md). The next release is **v0.2.0**, a SemVer-minor bump because commits 7a, 7b, 7c, and 12 are breaking API changes (see [CHANGELOG.md](../CHANGELOG.md) and the [Migration table in README.md](../README.md#migration-016--020)).
 
 All near-term items in the previous roadmap have shipped as part of commits 1–18 — the **Recently delivered** table below consolidates them.
 
