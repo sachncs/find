@@ -33,13 +33,13 @@ Paste any error output or logs here
 ## Environment
 
 - **OS**: [e.g., Ubuntu 22.04, macOS 14, Windows 11]
-- **Rust version**: [e.g., 1.70.0]
-- **Project version**: [e.g., 1.0.0]
+- **Rust version**: [e.g., 1.81.0]
+- **Project version**: [e.g., 0.1.6]
 - **Architecture**: [e.g., x86_64, aarch64]
 
 ## Additional Context
 
-Add any other context about the problem here. Include:
+Add any other other context about the problem here. Include:
 - Command-line arguments used
 - Public key format (if applicable)
 - Data directory contents (if applicable)
@@ -47,6 +47,6 @@ Add any other context about the problem here. Include:
 ## Checklist
 
 - [ ] I have searched existing issues for duplicates
-- [ ] I am using a supported version (1.0.x)
+- [ ] I am using a supported version (0.1.x, see [SECURITY.md](../../SECURITY.md))
 - [ ] I have included all relevant environment details
 - [ ] I can reproduce this issue consistently
