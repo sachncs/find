@@ -11,7 +11,6 @@ updates:
       - "sachncs"
     labels:
       - "dependencies"
-      - "rust"
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -30,6 +29,5 @@ updates:
       - "sachncs"
     labels:
       - "dependencies"
-      - "ci"
     commit-message:
       prefix: "ci(deps)"
