@@ -100,3 +100,9 @@ coverage/
 *.so
 *.dylib
 *.dll
+
+# mkdocs build output (rebuilt by CI)
+site/
+
+# mkdocs local cache
+.mkdocs_cache/
