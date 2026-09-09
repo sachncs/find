@@ -151,6 +151,7 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 | `compute_variant_x_bytes(&ProjectivePoint) -> Vec<[u8; 32]>` | Computes the target-specific X-coordinates (per-session arithmetic); pairs with `generate_variants` to build a `VariantIndex` |
 | `sweep_parallel(&VariantIndex, start, end, batch_size) -> Option<SearchMatch>` | CPU-bound parallel sweep; honours `batch_size` from `Config::batch_size` (commit 7b) |
 | `sweep_and_cache(start, end, &W, Option<&VariantIndex>, &Progress, batch_size) -> Result<Option<SearchMatch>>` | Pre-computes a binary cache chunk while optionally searching for a match |
+| `sweep_address(start, end, batch_size, target, variants) -> Option<SearchMatch>` | Address-keyed sweep (hash40 compare instead of X-coordinate match) over a `u128` range; see ADR-0011 |
 
 **Performance notes:**
 
@@ -158,6 +159,24 @@ The crate enables `#![warn(missing_docs)]`, so any undocumented public item is a
 - `sweep_and_cache` uses a `OnceLock<SearchMatch>` for cross-batch coordination; worker panics cannot corrupt the result because there is no lock.
 - The hot-path arrays are heap-allocated (`Vec<ProjectivePoint>`, `Vec<AffinePoint>`, `Vec<u8>`) and sized at runtime against `Config::batch_size`.
 - `generate_variants` returns `&'static [OffsetVariant]` interned via `OnceLock<Box<[OffsetVariant; 512]>>`; the per-session X-coordinates come from `compute_variant_x_bytes`.
+
+**Return-type asymmetry:**
+
+The three sweep entry points return different result types because
+they have different failure modes:
+
+| Function | Returns | Why |
+|---|---|---|
+| `sweep_parallel` | `Option<SearchMatch>` | Pure CPU; no I/O. Internal ECC failures panic (treated as unrecoverable). |
+| `sweep_and_cache` | `Result<Option<SearchMatch>, FindError>` | I/O via [`CacheWriter`] can fail with `FindError::Io` or `FindError::CacheCorrupted`. |
+| `sweep_address` | `Option<SearchMatch>` | Pure CPU over a `u128` range; no I/O. |
+
+The asymmetry is intentional. Callers that want a uniform
+`Result<Option<SearchMatch>, FindError>` shape should use the
+orchestrator entry point [`crate::orchestrator::run`], which
+normalises across modes. See
+[ADR-0005](adr/0005-pure-search-module.md) for the module-split
+rationale.
 
 ## `persistence` — atomic checkpoints, caches, JSON
 

@@ -752,6 +752,26 @@ fn build_static_variants() -> Box<[OffsetVariant; VARIANT_COUNT]> {
 /// plus ~6 × 32 field multiplications (~15–20× speedup vs. sequential
 /// conversions).
 ///
+/// # Errors and panics
+///
+/// `sweep_parallel` returns `Option<SearchMatch>` directly (not
+/// `Result<Option<SearchMatch>, FindError>`) because the call is
+/// pure-CPU with no I/O failure mode — there is nothing for `Err` to
+/// carry. Internal ECC failures (e.g. an unexpected identity point
+/// from a k256-side arithmetic edge case) panic rather than returning
+/// an error; the project treats such cases as unrecoverable.
+///
+/// Callers that want the `Result` shape should use
+/// [`sweep_parallel`] under a `catch_unwind` shim or the
+/// [`crate::orchestrator::run`] entry point, both of which surface
+/// panics as process aborts (`RUST_BACKTRACE=1` for diagnostics).
+///
+/// The I/O-aware sibling [`sweep_and_cache`] returns
+/// `Result<Option<SearchMatch>, FindError>` because the [`CacheWriter`]
+/// can fail with [`FindError::Io`] or [`FindError::CacheCorrupted`].
+/// See [`docs/modules.md`](../docs/modules.md) for the full
+/// asymmetry rationale.
+//
 /// # Pseudocode
 ///
 /// ```text
@@ -1144,6 +1164,17 @@ pub fn sweep_and_cache<W: CacheWriter>(
 ///
 /// `Some(SearchMatch{...})` on the first match; `None` if the range is
 /// fully exhausted without a match.
+///
+/// # Errors and panics
+///
+/// `sweep_address` returns `Option<SearchMatch>` directly (not
+/// `Result<Option<SearchMatch>, FindError>`) because the call is
+/// pure-CPU with no I/O failure mode. Internal arithmetic failures
+/// from the underlying k256 point operations panic rather than
+/// returning an error; the project treats such cases as
+/// unrecoverable. See [`sweep_parallel`] for the parallel sibling
+/// and [`docs/modules.md`](../docs/modules.md) for the full
+/// asymmetry rationale across the three sweep entry points.
 ///
 /// # Scalar range
 ///
