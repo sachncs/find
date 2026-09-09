@@ -26,7 +26,7 @@ jobs:
       - run: pip install --quiet mkdocs mkdocs-material "mkdocs-git-revision-date-localized-plugin"
       - run: mkdocs build --strict
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
