@@ -1,0 +1,11 @@
+# Build configuration for the find tool.
+#
+# For local development, set `RUSTFLAGS` to enable host-CPU optimisations:
+#
+#   export RUSTFLAGS="-C target-cpu=native"
+#
+# This is NOT checked into the repo because `target-cpu=native` produces
+# binaries tied to the builder's instruction set. CI uses the generic
+# target for portability.
+#
+# See .github/workflows/ci.yml for the CI configuration.

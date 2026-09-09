@@ -1,0 +1,58 @@
+[package]
+name = "find-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+k256 = { version = "0.13", features = ["arithmetic"] }
+hex = "0.4"
+
+[dependencies.find]
+path = ".."
+
+[[bin]]
+name = "parse_pubkey"
+path = "fuzz_targets/parse_pubkey.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_pubkey_roundtrip"
+path = "fuzz_targets/parse_pubkey_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hex_to_scalar"
+path = "fuzz_targets/hex_to_scalar.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scalar_mul_g"
+path = "fuzz_targets/scalar_mul_g.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "generate_variants"
+path = "fuzz_targets/generate_variants.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "match_x"
+path = "fuzz_targets/match_x.rs"
+test = false
+doc = false
+bench = false

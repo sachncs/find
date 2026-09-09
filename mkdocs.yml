@@ -1,0 +1,169 @@
+site_name: find — secp256k1 scalar discovery
+site_description: >-
+  Sub-second secp256k1 scalar discovery via 512-variant range-splitting
+  and Montgomery batch inversion. Educational/research-only.
+site_author: Sachin <sachncs@gmail.com>
+site_url: https://sachncs.github.io/find/
+repo_url: https://github.com/sachncs/find
+repo_name: sachncs/find
+edit_uri: edit/master/docs/
+copyright: >-
+  Copyright &copy; 2026 Sachin &mdash;
+  <a href="https://github.com/sachncs/find/blob/master/LICENSE-MIT">MIT License</a>.
+  This software is for educational and research purposes only.
+
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/sachncs/find
+    - icon: fontawesome/brands/rust
+      link: https://crates.io/crates/find
+  generator: false
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 4
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+validation:
+  # Source files referenced from docs/ (src/, tests/, benches/, fuzz/, etc.)
+  # are GitHub-only — they are not part of the rendered site. The docs site
+  # is a guide, not a code mirror. Treat missing targets in those paths
+  # as informational rather than build-breaking.
+  nav:
+    omitted_files: ignore
+    not_found: ignore
+    absolute_links: ignore
+  links:
+    not_found: ignore
+    absolute_links: ignore
+    unrecognized_links: ignore
+    anchors: ignore
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Overview: overview.md
+  - Architecture: architecture.md
+  - Algorithms: algorithms.md
+  - CLI Reference: cli.md
+  - Configuration: configuration.md
+  - Modules: modules.md
+  - Observability: observability.md
+  - Performance: performance.md
+  - Benchmarks: benchmarks.md
+  - Testing: testing.md
+  - Deployment: deployment.md
+  - Operations: operations.md
+  - Troubleshooting: troubleshooting.md
+  - Security: security.md
+  - FAQ: faq.md
+  - Roadmap: roadmap.md
+  - Glossary: glossary.md
+  - References: references.md
+  - Architecture Decisions:
+      - adr/README.md
+      - ADR-0001 Multi-variant range-splitting search: adr/0001-multi-variant-search.md
+      - ADR-0002 Montgomery batch normalization: adr/0002-batch-normalization.md
+      - ADR-0003 Atomic checkpoints: adr/0003-atomic-checkpointing.md
+      - ADR-0004 Error hierarchy: adr/0004-error-hierarchy.md
+      - ADR-0005 Pure search module: adr/0005-pure-search-module.md
+      - ADR-0006 Binary cache format: adr/0006-binary-cache-format.md
+      - ADR-0007 Y-parity ambiguity: adr/0007-y-parity-ambiguity.md
+      - ADR-0008 Mutex poisoning policy: adr/0008-mutex-poisoning-policy.md
+      - ADR-0009 Runtime batch size: adr/0009-runtime-batch-size.md
+      - ADR-0010 k256-bmi2 portable scope: adr/0010-k256-bmi2-portable-scope.md
+      - ADR-0011 Address discovery: adr/0011-address-discovery.md
+      - ADR-0012 match_x slice signature: adr/0012-match-x-slice-signature.md
+  - Optimization Decisions:
+      - optimization-decisions/README.md
+      - OD-0001 AffinePoint::x direct: optimization-decisions/0001-affinepoint-x-direct.md
+      - OD-0002 Variant labels OnceLock: optimization-decisions/0002-variant-labels-once-lock.md
+      - OD-0003 Packed variant index: optimization-decisions/0003-packed-variant-index.md
+      - OD-0004 Atomic flag early exit: optimization-decisions/0004-atomic-flag-early-exit.md
+      - OD-0005 Cached sweep stack buffer: optimization-decisions/0005-cached-sweep-stack-buffer.md
+      - OD-0006 u256 decimal without BigUint: optimization-decisions/0006-u256-decimal-no-biguint.md
+      - OD-0007 OnceLock early exit: optimization-decisions/0007-oncelock-early-exit.md
+      - OD-0008 Super-batch chaining: optimization-decisions/0008-super-batch-chaining.md
+      - OD-0009 Deferred batch normalize: optimization-decisions/0009-deferred-batch-normalize.md
+      - OD-0010 Group early-exit flag: optimization-decisions/0010-group-early-exit-flag.md
+  - Maintenance:
+      - maintenance/release.md
+
+exclude_docs: |
+  maintenance/internal/
+  README.md
+
+extra_css:
+  - assets/extra.css

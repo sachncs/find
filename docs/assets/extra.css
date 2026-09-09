@@ -1,0 +1,80 @@
+/* find documentation site — extra styles */
+
+:root {
+  --md-text-font: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+/* Hero card */
+.md-typeset .hero {
+  margin: 1.5rem 0 2.5rem;
+  padding: 2rem 1.5rem;
+  border-radius: 0.5rem;
+  background: linear-gradient(135deg,
+                              var(--md-primary-fg-color) 0%,
+                              var(--md-accent-fg-color) 100%);
+  color: var(--md-primary-bg-color);
+}
+
+.md-typeset .hero h1 {
+  margin: 0 0 0.5rem;
+  color: inherit;
+  font-weight: 700;
+}
+
+.md-typeset .hero p {
+  margin: 0.5rem 0;
+  color: inherit;
+  opacity: 0.92;
+}
+
+/* Pill grid for feature cards */
+.pill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.75rem;
+  margin: 1rem 0 2rem;
+}
+
+.pill-grid .pill {
+  display: block;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-code-bg-color);
+  font-size: 0.85rem;
+}
+
+.pill-grid .pill strong {
+  color: var(--md-primary-fg-color);
+  display: block;
+  margin-bottom: 0.15rem;
+}
+
+/* "Two input modes" card grid */
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 2rem;
+}
+
+.mode-grid .mode {
+  padding: 1rem 1.2rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.4rem;
+}
+
+.mode-grid .mode h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+  color: var(--md-primary-fg-color);
+}
+
+.mode-grid .mode code {
+  font-size: 0.78rem;
+}
+
+/* Disclaimer callout — always visible on every page footer-area */
+.md-typeset .admonition.disclaimer {
+  border-left-width: 0.3rem;
+}
