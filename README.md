@@ -12,6 +12,13 @@
 
 </div>
 
+> **Note on the name.** The crate name `find` collides with GNU coreutils
+> `find`, BSD/macOS `find`, CMake `find_package`, every editor's
+> Ctrl-F, and countless other Rust crates. To reach **this** project,
+> search for `sachncs/find` on GitHub, or for the alias
+> `secp-find` in your search engine. A rename is being tracked for
+> the `0.2.0` release.
+
 **find** is a high-performance Rust system for secp256k1 private key discovery
 using a multi-variant range-splitting algorithm. It searches for scalars `j`
 and offsets `V` such that `x(j·G) = x(P - V·G)`, yielding key candidates
