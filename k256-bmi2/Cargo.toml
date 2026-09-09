@@ -2,7 +2,7 @@
 name = "k256-bmi2"
 version = "0.1.0"
 edition = "2021"
-description = "BMI2/ADX-accelerated field multiplication for secp256k1 — drop-in fork of k256's field arithmetic."
+description = "Portable 5×52 limb schoolbook secp256k1 field multiplication — correctness oracle for k256 arithmetic. Drop-in portable replacement; not a hot-path accelerator."
 license = "MIT"
 
 [dependencies]
