@@ -56,7 +56,7 @@ num-traits = "0.2"
 num-bigint = "0.5"
 # secp256k1-sys: cross-implementation differential testing against the
 # reference C library. Bundles libsecp256k1 from source.
-secp256k1-sys = { version = "0.13", default-features = false, features = ["std"] }
+secp256k1-sys = { version = "0.14", default-features = false, features = ["std"] }
 
 [[bench]]
 name = "bench"
