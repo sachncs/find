@@ -10,7 +10,7 @@
 //! Only the two mainnet types P2PKH (version byte `0x00`) and P2SH (version
 //! byte `0x05`) are accepted. Testnet (`0x6f`), Bech32/SegWit, and other
 //! non-standard version bytes are rejected with
-//! [`FindError::InvalidAddress`](crate::error::FindError::InvalidAddress).
+//! [`FindError::InvalidAddress`].
 //!
 //! # Why this lives in `find`
 //!
@@ -33,7 +33,7 @@ const VALID_VERSION_BYTES: &[u8] = b"\x00\x05";
 /// A 20-byte Bitcoin hash (RIPEMD-160 ∘ SHA-256 of the compressed pubkey).
 ///
 /// Newtype wraps `[u8; 20]` so it cannot be confused with arbitrary byte
-/// arrays in function signatures. Implements [`Display`] in the canonical
+/// arrays in function signatures. Implements [`std::fmt::Display`] in the canonical
 /// lower-case hex form (no `0x` prefix, trimmed of leading zeros).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Address40(pub [u8; 20]);
