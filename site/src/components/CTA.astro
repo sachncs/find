@@ -1,0 +1,78 @@
+---
+const repoHref = "https://github.com/sachncs/find";
+const cratesHref = "https://crates.io/crates/find";
+const apiHref = "https://github.com/sachncs/find/blob/master/src/lib.rs";
+---
+
+<section id="install" class="section">
+  <div class="container-x">
+    <div class="relative overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--bg-elev)] p-8 md:p-14">
+      <div
+        class="absolute inset-0 -z-10"
+        style="background:
+          radial-gradient(60% 80% at 80% 20%, oklch(0.62 0.20 38 / 0.18), transparent 60%),
+          radial-gradient(50% 60% at 10% 90%, oklch(0.58 0.16 240 / 0.14), transparent 60%);"
+      ></div>
+      <div
+        class="absolute inset-0 -z-10 opacity-50"
+        style="background-image:
+          linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+          linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+          background-size: 32px 32px;
+          mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, #000 30%, transparent 80%);
+          -webkit-mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, #000 30%, transparent 80%);"
+      ></div>
+
+      <div class="grid items-end gap-8 lg:grid-cols-[1.1fr_1fr]">
+        <div>
+          <span class="eyebrow">Get started</span>
+          <h2 class="h-section mt-3 text-[clamp(2rem,4vw,3.25rem)] text-[var(--fg)]">
+            Three commands to your first sweep.
+          </h2>
+          <p class="mt-4 max-w-xl text-[1.02rem] leading-relaxed text-[var(--fg-muted)]">
+            Install from crates.io, build from source, or use the library API. The whole crate compiles in seconds
+            on a modern laptop and produces a single statically-linked binary.
+          </p>
+
+          <div class="mt-7 flex flex-wrap gap-3">
+            <a href={cratesHref} target="_blank" rel="noopener noreferrer" class="btn btn-primary">
+              Install from crates.io
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M7 17 17 7M9 7h8v8"/>
+              </svg>
+            </a>
+            <a href={repoHref} target="_blank" rel="noopener noreferrer" class="btn btn-ghost">
+              View on GitHub
+            </a>
+            <a href={apiHref} target="_blank" rel="noopener noreferrer" class="btn btn-ghost">
+              Browse the API
+            </a>
+          </div>
+        </div>
+
+        <div class="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--terminal-bg)]">
+          <div class="flex items-center gap-2 border-b border-[var(--line)] bg-[var(--bg-sunken)] px-4 py-2.5">
+            <span class="h-2.5 w-2.5 rounded-full bg-[#ff5f57]/80"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-[#febc2e]/80"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-[#28c840]/80"></span>
+            <span class="ml-2 font-mono text-[0.72rem] text-[var(--fg-subtle)]">shell</span>
+          </div>
+          <pre class="overflow-x-auto p-5 font-mono text-[0.84rem] leading-relaxed text-[var(--terminal-fg)]"><code><span class="text-[var(--fg-subtle)]"># Install</span>
+<span class="text-[color:var(--color-brand-500)]">$</span> cargo install find
+
+<span class="text-[var(--fg-subtle)]"># Or build from source</span>
+<span class="text-[color:var(--color-brand-500)]">$</span> git clone https://github.com/sachncs/find
+<span class="text-[color:var(--color-brand-500)]">$</span> cd find &amp;&amp; cargo build --release
+
+<span class="text-[var(--fg-subtle)]"># Run</span>
+<span class="text-[color:var(--color-brand-500)]">$</span> find --pubkey 0279be66...
+<span class="text-[var(--fg-subtle)]">{</span>
+<span class="text-[var(--fg-subtle)]">  "match": null,</span>
+<span class="text-[var(--fg-subtle)]">  "probed": 1247823104,</span>
+<span class="text-[var(--fg-subtle)]">  "elapsed_secs": 2.84</span>
+<span class="text-[var(--fg-subtle)]">}</span></code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#181028"/>
+      <stop offset="100%" stop-color="#0a0814"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffb074"/>
+      <stop offset="55%" stop-color="#e0683a"/>
+      <stop offset="100%" stop-color="#7d2614"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="rgba(255,176,116,0.55)"/>
+      <stop offset="100%" stop-color="rgba(255,176,116,0)"/>
+    </radialGradient>
+    <pattern id="grid" x="0" y="0" width="56" height="56" patternUnits="userSpaceOnUse">
+      <path d="M 56 0 L 0 0 0 56" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+    </pattern>
+    <mask id="fadeMask">
+      <rect width="1200" height="630" fill="black"/>
+      <rect width="900" height="500" x="150" y="65" fill="white" rx="14"/>
+    </mask>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <rect width="1200" height="630" fill="url(#glow)" opacity="0.45"/>
+
+  <!-- Logo -->
+  <g transform="translate(96, 96)">
+    <rect width="72" height="72" rx="14" fill="url(#brand)"/>
+    <text x="36" y="55" text-anchor="middle" font-family="Inter, system-ui, sans-serif"
+          font-size="42" font-weight="700" fill="white" style="letter-spacing:-0.04em">F</text>
+  </g>
+
+  <!-- Brand title -->
+  <text x="186" y="148" font-family="Inter, system-ui, sans-serif"
+        font-size="36" font-weight="600" fill="white" style="letter-spacing:-0.04em">find</text>
+
+  <!-- Headline -->
+  <text x="96" y="320" font-family="Inter, system-ui, sans-serif"
+        font-size="76" font-weight="600" fill="white" style="letter-spacing:-0.04em">
+    secp256k1, decomposed
+  </text>
+  <text x="96" y="400" font-family="Inter, system-ui, sans-serif"
+        font-size="76" font-weight="600" fill="white" style="letter-spacing:-0.04em">
+    into 512 parallel paths.
+  </text>
+
+  <!-- Subhead -->
+  <text x="96" y="460" font-family="Inter, system-ui, sans-serif"
+        font-size="26" font-weight="400" fill="rgba(255,255,255,0.65)">
+    Sub-second scalar discovery via Montgomery batch inversion
+  </text>
+  <text x="96" y="494" font-family="Inter, system-ui, sans-serif"
+        font-size="26" font-weight="400" fill="rgba(255,255,255,0.65)">
+    and 512-variant range-splitting. Pure Rust. Educational.
+  </text>
+
+  <!-- Footer chip -->
+  <g transform="translate(96, 540)">
+    <rect width="180" height="36" rx="18" fill="rgba(255,176,116,0.12)" stroke="rgba(255,176,116,0.3)"/>
+    <text x="90" y="24" text-anchor="middle" font-family="JetBrains Mono, monospace"
+          font-size="14" fill="#ffb074">v0.1.6 · MIT</text>
+  </g>
+  <g transform="translate(290, 540)">
+    <rect width="200" height="36" rx="18" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)"/>
+    <text x="100" y="24" text-anchor="middle" font-family="JetBrains Mono, monospace"
+          font-size="14" fill="rgba(255,255,255,0.7)">sachncs.github.io/find</text>
+  </g>
+
+  <!-- Right side decoration: stylized curve -->
+  <g transform="translate(820, 110)" mask="url(#fadeMask)" opacity="0.9">
+    <path d="M 60 380 C 100 290, 150 220, 200 200 C 240 185, 280 200, 300 215
+             C 315 230, 325 225, 340 215 C 360 380 410 215, 440 240
+             C 480 270, 530 320, 580 360"
+          fill="none" stroke="url(#brand)" stroke-width="3" stroke-linecap="round"/>
+    <path d="M 60 380 C 100 290, 150 220, 200 200 C 240 185, 280 200, 300 215
+             C 315 230, 325 225, 340 215 C 360 380 410 215, 440 240
+             C 480 270, 530 320, 580 360"
+          fill="none" stroke="url(#brand)" stroke-width="3" stroke-linecap="round"
+          transform="translate(0, 0) scale(1, -1) translate(0, -420)" opacity="0.7"/>
+    <circle cx="200" cy="200" r="7" fill="#ffd6a8"/>
+    <circle cx="200" cy="220" r="7" fill="#ffd6a8"/>
+    <circle cx="440" cy="240" r="7" fill="#ffd6a8"/>
+    <circle cx="340" cy="215" r="9" fill="#fff"/>
+  </g>
+</svg>

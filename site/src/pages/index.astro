@@ -1,0 +1,31 @@
+---
+import Base from "~/layouts/Base.astro";
+import Nav from "~/components/Nav.astro";
+import Hero from "~/components/Hero.astro";
+import Overview from "~/components/Overview.astro";
+import Features from "~/components/Features.astro";
+import Performance from "~/components/Performance.astro";
+import Modes from "~/components/Modes.astro";
+import Architecture from "~/components/Architecture.astro";
+import Verify from "~/components/Verify.astro";
+import CTA from "~/components/CTA.astro";
+import Footer from "~/components/Footer.astro";
+---
+
+<Base
+  title="find — secp256k1 scalar discovery"
+  description="Sub-second secp256k1 scalar discovery via 512-variant range-splitting and Montgomery batch inversion. A high-performance Rust research engine — educational and pedagogical only."
+>
+  <Nav />
+  <main>
+    <Hero />
+    <Overview />
+    <Features />
+    <Performance />
+    <Modes />
+    <Architecture />
+    <Verify />
+    <CTA />
+  </main>
+  <Footer />
+</Base>

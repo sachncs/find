@@ -1,0 +1,172 @@
+---
+/**
+ * Secp256k1 curve visualization.
+ * Stylized mathematical plot of y² = x³ + 7 with discovered point pairs,
+ * the projection from j·G down to the X-axis, and the symmetric lower branch.
+ */
+---
+
+<div class="relative mx-auto w-full max-w-[36rem] select-none">
+  <div
+    class="relative aspect-[5/3.4] overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(80%_60%_at_50%_30%,rgba(255,176,116,0.18),transparent_60%)] p-6 md:p-8"
+    style="background-color: rgba(255,255,255,0.02);"
+  >
+    <svg
+      viewBox="0 0 600 410"
+      class="relative z-10 h-full w-full"
+      role="img"
+      aria-label="Visualization of the secp256k1 curve"
+    >
+      <defs>
+        <linearGradient id="curveStroke" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"  stop-color="#ffb074" stop-opacity="0.1"/>
+          <stop offset="35%" stop-color="#ffa15c" stop-opacity="1"/>
+          <stop offset="65%" stop-color="#ff7a3d" stop-opacity="1"/>
+          <stop offset="100%" stop-color="#c44a1f" stop-opacity="0.1"/>
+        </linearGradient>
+        <linearGradient id="curveFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"  stop-color="#ff8a4a" stop-opacity="0.30"/>
+          <stop offset="100%" stop-color="#ff8a4a" stop-opacity="0"/>
+        </linearGradient>
+        <radialGradient id="pointGlow" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0%"  stop-color="#ffd6a8" stop-opacity="1"/>
+          <stop offset="55%" stop-color="#ff8a4a" stop-opacity="0.5"/>
+          <stop offset="100%" stop-color="#ff8a4a" stop-opacity="0"/>
+        </radialGradient>
+        <filter id="strokeGlow" x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="4" result="b"/>
+          <feMerge>
+            <feMergeNode in="b"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+        <filter id="pointBlur" x="-100%" y="-100%" width="300%" height="300%">
+          <feGaussianBlur stdDeviation="6"/>
+        </filter>
+      </defs>
+
+      <!-- baseline grid -->
+      <g stroke="rgba(255,255,255,0.07)" stroke-width="1">
+        <line x1="0" y1="205" x2="600" y2="205" />
+        <line x1="300" y1="0" x2="300" y2="410" />
+        <line x1="0" y1="105" x2="600" y2="105" stroke-dasharray="2 4" />
+        <line x1="0" y1="305" x2="600" y2="305" stroke-dasharray="2 4" />
+        <line x1="150" y1="0" x2="150" y2="410" stroke-dasharray="2 4" />
+        <line x1="450" y1="0" x2="450" y2="410" stroke-dasharray="2 4" />
+      </g>
+
+      <!-- axes labels -->
+      <g font-family="JetBrains Mono, monospace" font-size="10" fill="rgba(255,255,255,0.40)">
+        <text x="306" y="14">y</text>
+        <text x="586" y="200" text-anchor="end">x</text>
+        <text x="306" y="402">y² = x³ + 7 (mod p)</text>
+      </g>
+
+      <!-- glow underlay -->
+      <g filter="url(#strokeGlow)" opacity="0.9">
+        <!-- filled area under the curve -->
+        <path
+          d="M 60 388 C 90 310, 130 250, 175 222 C 215 200, 255 215, 275 230 C 287 240, 295 233, 300 228
+             C 305 223, 313 218, 325 212 C 360 200, 400 212, 430 240 C 470 272, 510 322, 540 362
+             L 540 388 Z"
+          fill="url(#curveFill)"
+          opacity="0.85"
+        />
+
+        <!-- main curve stroke -->
+        <path
+          class="draw-stroke"
+          d="M 60 388 C 90 310, 130 250, 175 222 C 215 200, 255 215, 275 230 C 287 240, 295 233, 300 228
+             C 305 223, 313 218, 325 212 C 360 200, 400 212, 430 240 C 470 272, 510 322, 540 362"
+          fill="none"
+          stroke="url(#curveStroke)"
+          stroke-width="2.4"
+          stroke-linecap="round"
+        />
+
+        <!-- symmetric lower branch -->
+        <path
+          d="M 60 388 C 90 310, 130 250, 175 222 C 215 200, 255 215, 275 230 C 287 240, 295 233, 300 228
+             C 305 223, 313 218, 325 212 C 360 200, 400 212, 430 240 C 470 272, 510 322, 540 362"
+          fill="none"
+          stroke="url(#curveStroke)"
+          stroke-width="2.4"
+          stroke-linecap="round"
+          transform="translate(0, 0) scale(1, -1) translate(0, -416)"
+          opacity="0.7"
+        />
+      </g>
+
+      <!-- dotted projection lines: j·G down to P -->
+      <g stroke="rgba(255,176,116,0.45)" stroke-dasharray="3 5" stroke-width="1" fill="none">
+        <line x1="300" y1="228" x2="300" y2="320" />
+        <line x1="300" y1="320" x2="175" y2="320" />
+        <line x1="175" y1="320" x2="175" y2="222" />
+        <line x1="430" y1="240" x2="430" y2="320" />
+      </g>
+
+      <!-- point glows (background) -->
+      <g filter="url(#pointBlur)" opacity="0.9">
+        <circle cx="175" cy="222" r="14" fill="url(#pointGlow)" />
+        <circle cx="175" cy="184" r="14" fill="url(#pointGlow)" />
+        <circle cx="430" cy="240" r="14" fill="url(#pointGlow)" />
+        <circle cx="430" cy="170" r="14" fill="url(#pointGlow)" />
+        <circle cx="300" cy="228" r="20" fill="url(#pointGlow)" />
+      </g>
+
+      <!-- point cores with subtle ring -->
+      <g>
+        <circle cx="175" cy="222" r="6" fill="#ffd6a8" stroke="#ff7a3d" stroke-width="1.5">
+          <animate attributeName="opacity" values="0.6;1;0.6" dur="3.6s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="175" cy="184" r="6" fill="#ffd6a8" stroke="#ff7a3d" stroke-width="1.5">
+          <animate attributeName="opacity" values="0.6;1;0.6" dur="3.6s" begin="0.4s" repeatCount="indefinite"/>
+        </circle>
+
+        <circle cx="430" cy="240" r="6" fill="#ffd6a8" stroke="#ff7a3d" stroke-width="1.5">
+          <animate attributeName="opacity" values="0.6;1;0.6" dur="3.6s" begin="0.8s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="430" cy="170" r="6" fill="#ffd6a8" stroke="#ff7a3d" stroke-width="1.5">
+          <animate attributeName="opacity" values="0.6;1;0.6" dur="3.6s" begin="1.2s" repeatCount="indefinite"/>
+        </circle>
+
+        <circle cx="300" cy="228" r="8" fill="#ffd6a8" stroke="#fff" stroke-width="1.5">
+          <animate attributeName="opacity" values="0.4;1;0.4" dur="2.4s" repeatCount="indefinite"/>
+        </circle>
+      </g>
+
+      <!-- labels -->
+      <g font-family="JetBrains Mono, monospace" font-size="11" font-weight="600">
+        <text x="184" y="222" fill="rgba(255,255,255,0.95)">G</text>
+        <text x="184" y="180" fill="rgba(255,255,255,0.95)">−G</text>
+        <text x="439" y="240" fill="rgba(255,255,255,0.95)">P</text>
+        <text x="439" y="166" fill="rgba(255,255,255,0.95)">−P</text>
+        <text x="312" y="223" fill="#ffd6a8">j·G</text>
+        <text x="438" y="316" fill="rgba(255,176,116,0.7)" font-size="9">x ≡ x(P − V·G)</text>
+      </g>
+    </svg>
+
+    <!-- floating coordinate chip overlay -->
+    <div
+      class="pointer-events-none absolute right-3 top-3 hidden rounded-lg border border-white/10 bg-black/50 px-3 py-2 font-mono text-[10px] leading-relaxed text-white/80 backdrop-blur-md md:block"
+    >
+      <div class="flex items-center gap-2">
+        <span class="inline-block h-1.5 w-1.5 rounded-full bg-[#ff8a4a]"></span>
+        <span>j·G = 0x9a7c…3f1d</span>
+      </div>
+      <div class="mt-1 flex items-center gap-2">
+        <span class="inline-block h-1.5 w-1.5 rounded-full bg-white/40"></span>
+        <span>x(j·G) ≡ x(P − V·G)</span>
+      </div>
+      <div class="mt-1 text-white/40">candidate d = V ± j (mod n)</div>
+    </div>
+
+    <!-- bottom-left formula chip -->
+    <div
+      class="pointer-events-none absolute bottom-3 left-3 hidden rounded-lg border border-white/10 bg-black/50 px-3 py-2 font-mono text-[10px] leading-relaxed text-white/70 backdrop-blur-md md:block"
+    >
+      <div>secp256k1 · F<sub class="text-[0.7em]">p</sub></div>
+      <div class="text-white/40">512 variants · Montgomery</div>
+    </div>
+  </div>
+</div>

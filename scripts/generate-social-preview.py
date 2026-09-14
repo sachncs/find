@@ -3,7 +3,8 @@
 Output: .github/social-preview.png (1200x630 PNG).
 
 Design:
-- Deep purple gradient background (project's mkdocs theme primary)
+- Dark hero gradient (matches site/public/og.svg)
+- Warm brand orange (matches site Logo + oklch(0.62 0.20 38) palette)
 - Project name "find" + tagline
 - Algorithm hint: P − V·G  (multi-variant range-splitting)
 - "Research / Educational Use Only" tag
@@ -15,13 +16,14 @@ import os
 
 W, H = 1200, 630
 
-# Brand colors (match mkdocs.yml primary deep purple + amber accent)
-PRIMARY_TOP = (94, 53, 177)        # deep purple
-PRIMARY_BOT = (46, 25, 95)         # darker purple
-ACCENT = (255, 193, 7)             # amber
-TEXT = (245, 240, 255)
-MUTED = (180, 165, 210)
-DIM = (140, 120, 175)
+# Brand colors (matches site Logo + Hero backdrop)
+PRIMARY_TOP = (24, 16, 40)         # oklch(0.13 0.02 280) — hero top
+PRIMARY_BOT = (10, 8, 20)          # oklch(0.07 0.02 260) — hero bottom
+ACCENT = (255, 142, 74)            # oklch(0.68 0.19 42) — brand-500
+ACCENT_SOFT = (255, 176, 116)      # oklch(0.78 0.16 42) — brand-300
+TEXT = (250, 247, 245)
+MUTED = (180, 175, 185)
+DIM = (110, 105, 120)
 GREEN_OK = (102, 187, 106)
 
 # Create base

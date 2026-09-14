@@ -287,7 +287,8 @@ The full review-driven pass added (without breaking the API): `BatchSize` newtyp
 
 ## Documentation
 
-All project documentation lives under [`docs/`](docs/README.md). Highlights:
+The marketing site lives in [`site/`](site/README.md) and is published to GitHub Pages.
+Engineering reference material lives under [`docs/`](docs/README.md). Highlights:
 
 - [docs/overview.md](docs/overview.md) — Project goals, scope, supported platforms
 - [docs/architecture.md](docs/architecture.md) — System architecture, data flow, concurrency, sync primitives
@@ -302,6 +303,10 @@ All project documentation lives under [`docs/`](docs/README.md). Highlights:
 - [docs/glossary.md](docs/glossary.md) — Terms, abbreviations, definitions
 - [docs/adr/](docs/adr/README.md) — Architecture Decision Records (0001–0009)
 - [docs/optimization-decisions/](docs/optimization-decisions/README.md) — Per-optimization rationale (0001–0007)
+
+The product page (live at [sachncs.github.io/find](https://sachncs.github.io/find/))
+is built with Astro and is **not** rendered from these markdown files — see
+[`site/README.md`](site/README.md) for the marketing-site build.
 
 ---
 

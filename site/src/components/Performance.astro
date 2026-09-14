@@ -1,0 +1,111 @@
+---
+import Counter from "./Counter.tsx";
+
+const metrics = [
+  {
+    value: 1.88,
+    suffix: " ms",
+    decimals: 2,
+    label: "10M scalars end-to-end",
+    detail: "vs 5.27 ms before precomputed-tables",
+  },
+  {
+    value: 2.80,
+    suffix: "×",
+    decimals: 2,
+    label: "End-to-end speedup",
+    detail: "Radix16 fixed-base table (commit series)",
+  },
+  {
+    value: 18,
+    suffix: "%",
+    decimals: 0,
+    label: "Less per-batch cycles",
+    detail: "chain + Montgomery + match, batch_size=64",
+  },
+  {
+    value: 100,
+    suffix: "×",
+    decimals: 0,
+    label: "Cached-sweep speedup",
+    detail: "NVMe binary cache vs CPU path",
+  },
+];
+
+const benchRows = [
+  { name: "plus_g_chain / chain_32_plus_g",      before: "33.78 µs", after: "17.99 µs", speedup: "1.88×" },
+  { name: "plus_g_chain / naive_32_scalar_muls", before: "919.88 µs", after: "423.73 µs", speedup: "2.17×" },
+  { name: "match_x / aligned_slice",             before: "—",        after: "31.6 ns",   speedup: "—" },
+  { name: "batch_normalization / 32_points",     before: "—",        after: "38.5 µs",   speedup: "~15–20×" },
+  { name: "end_to_end_small_scalar_12345 / 10M", before: "5.27 ms",  after: "1.886 ms",  speedup: "2.80×" },
+];
+---
+
+<section id="performance" class="section bg-[var(--bg-sunken)]">
+  <div class="container-x">
+    <div class="grid gap-6 md:grid-cols-[1fr_1.2fr] md:items-end">
+      <div>
+        <span class="eyebrow">Performance</span>
+        <h2 class="h-section mt-3 text-[clamp(2rem,4vw,3.25rem)] text-[var(--fg)]">
+          Measured, not promised.
+        </h2>
+      </div>
+      <p class="text-[1rem] leading-relaxed text-[var(--fg-muted)] md:text-[1.05rem]">
+        Reproducible on an Apple M3 Pro at <span class="font-mono">opt-level=3</span>,
+        <span class="font-mono">lto=fat</span>, criterion 100 samples. Numbers are pinned to a single canonical commit
+        and propagated identically through the changelog and benchmarks doc.
+      </p>
+    </div>
+
+    <div class="mt-12 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {metrics.map((m) => (
+        <div class="card p-6">
+          <p class="text-[0.72rem] uppercase tracking-[0.18em] text-[var(--fg-subtle)]">
+            {m.label}
+          </p>
+          <p class="mt-3 font-display text-[clamp(2rem,4.2vw,2.75rem)] tracking-[-0.04em] text-[var(--fg)]">
+            <Counter
+              client:load
+              value={m.value}
+              suffix={m.suffix}
+              decimals={m.decimals ?? 0}
+            />
+          </p>
+          <p class="mt-2 text-[0.85rem] text-[var(--fg-muted)]">{m.detail}</p>
+        </div>
+      ))}
+    </div>
+
+    <div class="mt-10 overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)]">
+      <div class="flex items-center justify-between border-b border-[var(--line)] px-5 py-3">
+        <div class="flex items-center gap-2 font-mono text-[0.78rem] text-[var(--fg-muted)]">
+          <span class="status-dot"></span>
+          <span>cargo bench --bench bench</span>
+        </div>
+        <span class="font-mono text-[0.7rem] text-[var(--fg-subtle)]">Apple M3 Pro · LTO fat</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[640px] text-left">
+          <thead>
+            <tr class="border-b border-[var(--line)] text-[0.7rem] uppercase tracking-[0.18em] text-[var(--fg-subtle)]">
+              <th class="px-5 py-3 font-medium">Benchmark</th>
+              <th class="px-5 py-3 font-medium">Before</th>
+              <th class="px-5 py-3 font-medium">After</th>
+              <th class="px-5 py-3 text-right font-medium">Speedup</th>
+            </tr>
+          </thead>
+          <tbody class="font-mono text-[0.85rem]">
+            {benchRows.map((r, i) => (
+              <tr class={`border-b border-[var(--line)] last:border-0 ${i === benchRows.length - 1 ? "bg-[color:var(--color-brand-500)]/5" : ""}`}>
+                <td class="px-5 py-3 text-[var(--fg)]">{r.name}</td>
+                <td class="px-5 py-3 text-[var(--fg-subtle)]">{r.before}</td>
+                <td class="px-5 py-3 text-[var(--fg)]">{r.after}</td>
+                <td class="px-5 py-3 text-right text-[color:var(--color-brand-500)]">{r.speedup}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>

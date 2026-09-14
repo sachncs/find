@@ -1,0 +1,93 @@
+---
+const stages = [
+  {
+    name: "parse_pubkey",
+    detail: "SEC1 compressed · 33 bytes · deep validate",
+    module: "src/ecc.rs",
+  },
+  {
+    name: "generate_variants",
+    detail: "512 × (label, offset, x_bytes) · OnceLock-interned",
+    module: "src/search.rs",
+  },
+  {
+    name: "VariantIndex",
+    detail: "flat sorted Vec, L1-resident, O(log 512)",
+    module: "src/search.rs",
+  },
+  {
+    name: "sweep_parallel",
+    detail: "rayon · batch_size · match_x binary search",
+    module: "src/search.rs",
+  },
+  {
+    name: "batch_normalize",
+    detail: "Montgomery simultaneous inversion · 1 + N mults",
+    module: "k256 / ProjectivePoint",
+  },
+  {
+    name: "publish match",
+    detail: "OnceLock<SearchMatch> · lock-free early-exit",
+    module: "src/orchestrator.rs",
+  },
+  {
+    name: "checkpoint",
+    detail: "atomic write-then-rename · fsync · JSON",
+    module: "src/persistence.rs",
+  },
+];
+---
+
+<section id="architecture" class="section">
+  <div class="container-x">
+    <div class="grid items-end gap-6 md:grid-cols-[1fr_1.2fr]">
+      <div>
+        <span class="eyebrow">Architecture</span>
+        <h2 class="h-section mt-3 text-[clamp(2rem,4vw,3.25rem)] text-[var(--fg)]">
+          One pipeline, eight stages.
+        </h2>
+      </div>
+      <p class="text-[1rem] leading-relaxed text-[var(--fg-muted)] md:text-[1.05rem]">
+        The orchestrator is a thin coordinator. The heavy lifting lives in
+        <span class="font-mono text-[var(--fg)]"> find::search </span> — a pure, I/O-free module
+        whose entire surface is exercised by 200+ integration cases.
+      </p>
+    </div>
+
+    <div class="relative mt-12">
+      <div
+        class="absolute left-[1.4rem] top-3 bottom-3 w-px bg-gradient-to-b from-transparent via-[var(--line-strong)] to-transparent md:left-1/2"
+        aria-hidden="true"
+      ></div>
+      <ol class="space-y-3">
+        {stages.map((s, i) => (
+          <li class="group relative grid items-center gap-4 rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] p-5 transition hover:border-[var(--line-strong)] md:grid-cols-[3rem_1fr_14rem_3rem] md:gap-6">
+            <div class="flex h-12 w-12 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--bg)] font-mono text-[0.85rem] text-[var(--fg-muted)] md:order-1">
+              {String(i + 1).padStart(2, "0")}
+            </div>
+
+            <div class="md:order-2">
+              <p class="font-display text-[1.05rem] tracking-[-0.02em] text-[var(--fg)]">
+                {s.name}
+                <span class="ml-2 text-[0.7rem] font-normal uppercase tracking-[0.18em] text-[var(--fg-subtle)]">
+                  stage
+                </span>
+              </p>
+              <p class="mt-1 text-[0.92rem] text-[var(--fg-muted)]">{s.detail}</p>
+            </div>
+
+            <code class="hidden font-mono text-[0.78rem] text-[var(--fg-subtle)] md:order-3 md:block">
+              {s.module}
+            </code>
+
+            <div class="hidden items-center justify-end md:order-4 md:flex">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="text-[var(--fg-subtle)] transition group-hover:translate-x-0.5 group-hover:text-[color:var(--color-brand-500)]">
+                <path d="M5 12h14M13 6l6 6-6 6"/>
+              </svg>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </div>
+</section>

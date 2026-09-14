@@ -1,0 +1,120 @@
+---
+const layers = [
+  {
+    name: "KAT",
+    stat: "13",
+    desc: "Known-answer tests against SEC1 §2.7.1 vectors and k256 reference outputs, plus a to_hex_x ↔ x_bytes round-trip regression.",
+    color: "oklch(0.68 0.19 42)",
+  },
+  {
+    name: "Differential",
+    stat: "12",
+    desc: "Cross-check vs the reference C libsecp256k1 across boundary scalars (1, 2, 7, 100, 1k, 1M, 1.2G, 2³², 2⁶³, u64::MAX, …).",
+    color: "oklch(0.58 0.16 240)",
+  },
+  {
+    name: "Audit",
+    stat: "21",
+    desc: "End-to-end pipeline (parse → variants → sweep → recover) for the known scalar 1234567890, plus a 20-case proptest over [2, 10_000].",
+    color: "oklch(0.68 0.18 145)",
+  },
+  {
+    name: "Integration",
+    stat: "60+",
+    desc: "Randomized discovery, prop_batch_size_runtime (1..=256), prop_search_finds_any_scalar_in_range, edge cases.",
+    color: "oklch(0.62 0.20 320)",
+  },
+  {
+    name: "Fuzz",
+    stat: "6",
+    desc: "cargo-fuzz targets for every public API: parse_pubkey, parse_pubkey_roundtrip, hex_to_scalar, scalar_mul_g, generate_variants, match_x.",
+    color: "oklch(0.68 0.18 30)",
+  },
+];
+
+const libs = [
+  { label: "71", sub: "lib unit tests" },
+  { label: "200+", sub: "integration" },
+  { label: "13", sub: "KAT vectors" },
+  { label: "12", sub: "differential" },
+  { label: "6", sub: "fuzz targets" },
+  { label: "9", sub: "criterion benches" },
+];
+
+const gates = [
+  "cargo fmt --all -- --check",
+  "cargo clippy --all-targets --all-features -- -D warnings",
+  "cargo test --all-targets --all-features",
+  "cargo test --doc",
+  "RUSTDOCFLAGS=-D warnings cargo doc --no-deps --all-features",
+];
+---
+
+<section id="verify" class="section bg-[var(--bg-sunken)]">
+  <div class="container-x">
+    <div class="grid items-end gap-6 md:grid-cols-[1fr_1.2fr]">
+      <div>
+        <span class="eyebrow">Verification</span>
+        <h2 class="h-section mt-3 text-[clamp(2rem,4vw,3.25rem)] text-[var(--fg)]">
+          Five layers. One local gate.
+        </h2>
+      </div>
+      <p class="text-[1rem] leading-relaxed text-[var(--fg-muted)] md:text-[1.05rem]">
+        Every public function has a unit test. Every pipeline has an integration test.
+        Every change is gated by the same five commands CI runs — no separate local recipe.
+      </p>
+    </div>
+
+    <div class="mt-12 grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+      {layers.map((l) => (
+        <article class="card relative overflow-hidden p-6">
+          <div
+            class="absolute -right-6 -top-6 h-24 w-24 rounded-full blur-2xl"
+            style={`background:${l.color}; opacity:0.18;`}
+          ></div>
+          <div class="relative">
+            <span class="font-mono text-[0.7rem] uppercase tracking-[0.18em] text-[var(--fg-subtle)]">
+              {l.name}
+            </span>
+            <p class="mt-2 font-display text-[2.6rem] leading-none tracking-[-0.04em]" style={`color:${l.color};`}>
+              {l.stat}
+            </p>
+            <p class="mt-3 text-[0.85rem] leading-relaxed text-[var(--fg-muted)]">{l.desc}</p>
+          </div>
+        </article>
+      ))}
+    </div>
+
+    <div class="mt-10 grid gap-6 lg:grid-cols-[1fr_1.2fr]">
+      <div class="card p-6">
+        <p class="text-[0.72rem] uppercase tracking-[0.18em] text-[var(--fg-subtle)]">Suite size</p>
+        <div class="mt-4 grid grid-cols-3 gap-4">
+          {libs.map((l) => (
+            <div class="rounded-xl border border-[var(--line)] bg-[var(--bg-sunken)] p-3 text-center">
+              <p class="font-display text-[1.45rem] tracking-[-0.04em] text-[var(--fg)]">{l.label}</p>
+              <p class="mt-1 text-[0.7rem] uppercase tracking-[0.16em] text-[var(--fg-subtle)]">{l.sub}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div class="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)]">
+        <div class="flex items-center justify-between border-b border-[var(--line)] px-5 py-3">
+          <div class="flex items-center gap-2 font-mono text-[0.78rem] text-[var(--fg-muted)]">
+            <span class="status-dot"></span>
+            <span>make all-checks</span>
+          </div>
+          <span class="font-mono text-[0.7rem] text-[var(--fg-subtle)]">CI · Ubuntu · macOS · Windows</span>
+        </div>
+        <ol class="divide-y divide-[var(--line)] font-mono text-[0.82rem]">
+          {gates.map((g, i) => (
+            <li class="flex items-center gap-3 px-5 py-2.5">
+              <span class="text-[0.7rem] text-[var(--fg-subtle)]">{String(i + 1).padStart(2, "0")}</span>
+              <code class="text-[var(--fg)]">{g}</code>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
+  </div>
+</section>

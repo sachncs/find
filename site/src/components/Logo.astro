@@ -1,0 +1,39 @@
+---
+export interface Props {
+  size?: number;
+  className?: string;
+  variant?: "default" | "mono";
+}
+
+const { size = 28, className = "", variant = "default" } = Astro.props;
+---
+
+<a href="/" aria-label="find" class={`group inline-flex items-center gap-2.5 ${className}`}>
+  <span
+    class="relative inline-flex items-center justify-center overflow-hidden rounded-[10px]"
+    style={`width:${size}px;height:${size}px;`}
+  >
+    <span
+      class="absolute inset-0"
+      style="background:linear-gradient(140deg, oklch(0.78 0.16 42) 0%, oklch(0.62 0.20 38) 55%, oklch(0.50 0.18 32) 100%);"
+    ></span>
+    <span
+      class="absolute inset-0 opacity-50"
+      style="background:radial-gradient(120% 80% at 0% 0%, oklch(1 0 0 / 0.35), transparent 50%);"
+    ></span>
+    <span
+      class="relative font-display text-white"
+      style={`font-size:${size * 0.6}px;letter-spacing:-0.04em;line-height:1;`}
+    >
+      {variant === "mono" ? "ƒ" : "F"}
+    </span>
+  </span>
+  {variant !== "mono" && (
+    <span class="font-display text-[1.05rem] tracking-[-0.04em] text-[var(--fg)]">
+      find
+      <span class="ml-1 text-[var(--fg-subtle)] font-mono text-[0.72rem] tracking-normal">
+        v0.1.6
+      </span>
+    </span>
+  )}
+</a>

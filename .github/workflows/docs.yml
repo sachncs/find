@@ -1,4 +1,4 @@
-name: Docs
+name: Site
 
 on:
   push:
@@ -20,15 +20,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.x"
-      - run: pip install --quiet mkdocs mkdocs-material "mkdocs-git-revision-date-localized-plugin"
-      - run: mkdocs build --strict
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: site/pnpm-lock.yaml
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Install dependencies
+        working-directory: site
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: site
+        run: pnpm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: site/dist
 
   deploy:
     name: Deploy to GitHub Pages

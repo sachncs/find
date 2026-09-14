@@ -1,0 +1,86 @@
+---
+import Terminal from "./Terminal.tsx";
+---
+
+<section id="overview" class="section relative">
+  <div class="container-x">
+    <div class="grid items-end gap-6 md:grid-cols-[1.1fr_1fr]">
+      <div>
+        <span class="eyebrow">What it does</span>
+        <h2 class="h-section mt-3 text-[clamp(2rem,4vw,3.25rem)] text-[var(--fg)]">
+          A working reference for
+          <span class="text-[color:var(--color-brand-500)]"> Montgomery-batch </span>
+          elliptic-curve search.
+        </h2>
+      </div>
+      <p class="text-[1.02rem] leading-relaxed text-[var(--fg-muted)] md:text-[1.08rem]">
+        Given a secp256k1 target <span class="font-mono">P = d·G</span>, the engine searches for scalars
+        <span class="font-mono"> j</span> and offsets <span class="font-mono">V</span> such that
+        <span class="font-mono"> x(j·G) = x(P − V·G) </span>, yielding candidate keys
+        <span class="font-mono"> d = V ± j (mod n) </span> — a textbook multi-variant range-splitting
+        implementation, end-to-end tested.
+      </p>
+    </div>
+
+    <div class="mt-12 grid gap-8 lg:grid-cols-[1.1fr_1fr]">
+      <Terminal client:visible />
+
+      <div class="grid gap-3 self-start">
+        <div class="card flex items-start gap-4 p-5">
+          <div
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+            style="background:linear-gradient(140deg, oklch(0.62 0.20 38 / 0.18), oklch(0.62 0.20 38 / 0.05)); color:oklch(0.68 0.19 42);"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+              <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="font-display text-[1.05rem] tracking-[-0.02em] text-[var(--fg)]">512-variant range-splitting</h3>
+            <p class="mt-1.5 text-[0.9rem] leading-relaxed text-[var(--fg-muted)]">
+              The search space is decomposed via powers-of-two and cumulative-sum offsets. Metadata is
+              interned <span class="font-mono">OnceLock&lt;[OffsetVariant; 512]&gt;</span> — zero allocations per session.
+            </p>
+          </div>
+        </div>
+
+        <div class="card flex items-start gap-4 p-5">
+          <div
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+            style="background:linear-gradient(140deg, oklch(0.58 0.16 240 / 0.18), oklch(0.58 0.16 240 / 0.05)); color:oklch(0.68 0.16 235);"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 12h3l3-9 6 18 3-9h3"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="font-display text-[1.05rem] tracking-[-0.02em] text-[var(--fg)]">Montgomery batch inversion</h3>
+            <p class="mt-1.5 text-[0.9rem] leading-relaxed text-[var(--fg-muted)]">
+              One inversion per <span class="font-mono">batch_size</span>-point batch instead of <span class="font-mono">N</span>. Drops
+              the normalization phase by ~15–20× on a default batch of 32.
+            </p>
+          </div>
+        </div>
+
+        <div class="card flex items-start gap-4 p-5">
+          <div
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+            style="background:linear-gradient(140deg, oklch(0.68 0.18 145 / 0.18), oklch(0.68 0.18 145 / 0.05)); color:oklch(0.68 0.18 145);"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="font-display text-[1.05rem] tracking-[-0.02em] text-[var(--fg)]">Radix16 fixed-base table</h3>
+            <p class="mt-1.5 text-[0.9rem] leading-relaxed text-[var(--fg-muted)]">
+              A 33-entry lookup table (~30 KB static, lazily built) roughly halves the bootstrap scalar-mul cost.
+              Measured end-to-end speedup: <span class="font-mono text-[var(--fg)]">2.80×</span>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

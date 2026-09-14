@@ -102,7 +102,9 @@ coverage/
 *.dll
 
 # mkdocs build output (rebuilt by CI)
-site/
+site/dist/
+site/.astro/
+site/node_modules/
 
 # mkdocs local cache
 .mkdocs_cache/

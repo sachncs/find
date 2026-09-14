@@ -1,0 +1,106 @@
+---
+const features = [
+  {
+    title: "Lock-free early-exit",
+    body:
+      "OnceLock<SearchMatch> replaces the classic Mutex + AtomicBool pair. The first thread to find a hit publishes the result; the rest exit through rayon’s work-stealing scheduler with zero contention.",
+    icon: "bolt",
+  },
+  {
+    title: "Atomic checkpointing",
+    body:
+      "Write-then-rename persists every boundary with an integrity anchor. Crash mid-sweep, restart from the exact j — no duplicate work, no corrupted state.",
+    icon: "shield",
+  },
+  {
+    title: "Runtime-sized batches",
+    body:
+      "Vec<ProjectivePoint> sized against Config::batch_size (1..=256). --batch-size is finally honoured at runtime; peak heap is bounded by your input, not a hard-coded constant.",
+    icon: "layers",
+  },
+  {
+    title: "Binary cache (~100×)",
+    body:
+      "Optional precomputation persists X-coordinates to disk. On NVMe, the cached sweep path hits 10⁸ scalars/sec — about 100× the CPU-bound path. Auto-disabled in address mode.",
+    icon: "disk",
+  },
+  {
+    title: "Structured observability",
+    body:
+      "tracing + tracing-subscriber with non-blocking daily-rolling files. RUST_LOG-style filtering, audit boundaries every TRILLION scalars, and rayon-panic-safe worker handlers.",
+    icon: "wave",
+  },
+  {
+    title: "Five verification layers",
+    body:
+      "KAT against SEC1 §2.7.1, differential vs libsecp256k1, end-to-end audit, randomized integration, and six cargo-fuzz targets — all reproducible with a single cargo test.",
+    icon: "check",
+  },
+  {
+    title: "Strict lints, zero noise",
+    body:
+      "Curated pedantic + nursery clippy sets gated by -D warnings. Documented allow-list, no #[allow(unused)] scattered in the source. If clippy is silent, the code is clean.",
+    icon: "lint",
+  },
+  {
+    title: "Pure search domain",
+    body:
+      "find::search owns no I/O. All persistence is behind the CacheWriter trait — the hot loop stays pure, testable, and free of side effects.",
+    icon: "diamond",
+  },
+  {
+    title: "Clean public crate API",
+    body:
+      "find::config, find::ecc, find::orchestrator, find::search, find::error. Result<Option<SearchMatch>, FindError> at every public boundary. #![warn(missing_docs)] on the crate root.",
+    icon: "package",
+  },
+];
+
+const iconPaths: Record<string, string> = {
+  bolt:   "M13 2 4 14h7l-1 8 9-12h-7l1-8Z",
+  shield: "M12 2 4 6v6c0 5 3.5 9.5 8 10 4.5-.5 8-5 8-10V6l-8-4Z",
+  layers: "M12 2 2 7l10 5 10-5-10-5ZM2 12l10 5 10-5M2 17l10 5 10-5",
+  disk:   "M5 4h14v16H5zM9 4v16M5 9h14M5 14h14",
+  wave:   "M3 12c2-4 4-4 6 0s4 4 6 0 4-4 6 0",
+  check:  "M20 6 9 17l-5-5",
+  lint:   "M9 11 4 16l5 5 11-11-5-5-6 6ZM14 6l4 4",
+  diamond:"M12 2 22 12 12 22 2 12 12 2Z",
+  package:"M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8",
+};
+---
+
+<section id="features" class="section">
+  <div class="container-x">
+    <div class="flex items-end justify-between gap-6">
+      <div>
+        <span class="eyebrow">Engineered details</span>
+        <h2 class="h-section mt-3 text-[clamp(2rem,4vw,3.25rem)] text-[var(--fg)]">
+          Built for clarity, tuned for speed.
+        </h2>
+      </div>
+      <p class="hidden max-w-md text-[1rem] leading-relaxed text-[var(--fg-muted)] md:block">
+        Every subsystem is documented in an ADR or optimization decision. Trade-offs are explicit, not accidental.
+      </p>
+    </div>
+
+    <div class="mt-12 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {features.map((f) => (
+        <article class="card group p-6">
+          <div
+            class="mb-5 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--line)] bg-[var(--bg-sunken)] text-[color:var(--color-brand-500)]"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d={iconPaths[f.icon]} />
+            </svg>
+          </div>
+          <h3 class="font-display text-[1.1rem] tracking-[-0.025em] text-[var(--fg)]">
+            {f.title}
+          </h3>
+          <p class="mt-2.5 text-[0.92rem] leading-relaxed text-[var(--fg-muted)]">
+            {f.body}
+          </p>
+        </article>
+      ))}
+    </div>
+  </div>
+</section>
